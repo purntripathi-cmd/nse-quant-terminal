@@ -10,11 +10,15 @@ st.set_page_config(page_title="Live Nifty Arbitrage Terminal", layout="wide")
 st.title("Live Nifty Cash-Futures Multi-Expiry Arbitrage Terminal")
 st.markdown("Scans live intraday F&O universe, sorts by Net XIRR, executes paper trades for top 3, manages logs, and tracks performance.")
 
+# --- PERSISTENT NAVIGATION STATE ---
+if "active_nav" not in st.session_state:
+    st.session_state.active_nav = "📊 Market Scanner & Rankings"
+
 # --- SIDEBAR CONTROLS ---
 st.sidebar.header("Terminal Controls")
 if st.sidebar.button("🔄 Force Live Refresh"):
     st.cache_data.clear()
-    st.success("Cache cleared. Fetching fresh live market ticks...")
+    st.sidebar.success("Cache cleared. Fetching fresh live market ticks...")
 
 # Comprehensive Nifty F&O Universe Tickers
 universe_tickers = [
@@ -159,11 +163,26 @@ def fetch_live_intraday_arbitrage(tickers):
 df_best, df_all = fetch_live_intraday_arbitrage(universe_tickers)
 
 if df_best.empty:
-    st.warning("Market feeds currently syncing or market closed. Click 'Force Live Refresh' to retry.")
+    st.warning("Market feeds currently syncing or market closed. Click 'Force Live Refresh' in sidebar to retry.")
 else:
-    tab1, tab2, tab3 = st.tabs(["Market Arbitrage Scanner & Rankings", "Deep-Dive Expiry Comparison", "Model Training & Paper Trade Log"])
+    # --- USER-FRIENDLY PERSISTENT NAVIGATION BAR ---
+    st.markdown("### Terminal Navigation")
+    nav_options = [
+        "📊 Market Scanner & Rankings", 
+        "🔍 Multi-Expiry Deep-Dive", 
+        "📥 Model Training & Paper Trades"
+    ]
     
-    with tab1:
+    selected_tab = st.radio(
+        "Select Terminal View", 
+        options=nav_options, 
+        horizontal=True, 
+        label_visibility="collapsed",
+        key="persistent_nav"
+    )
+    st.markdown("---")
+    
+    if selected_tab == "📊 Market Scanner & Rankings":
         st.subheader("Live Intraday Best Contract Scan Results per Stock (Sorted by Net XIRR)")
         st.dataframe(df_best, use_container_width=True)
 
@@ -182,7 +201,7 @@ else:
             bottom_3 = df_best.tail(3)
             st.table(bottom_3[["Ticker", "Contract Name", "Total Capital Required (₹)", "Net Return (%)", "Net XIRR (%)", "Model Confidence (%)"]])
 
-    with tab2:
+    elif selected_tab == "🔍 Multi-Expiry Deep-Dive":
         st.subheader("Multi-Expiry Options Comparison by Stock")
         selected_stock = st.selectbox("Select Ticker for Expiry Breakdown", df_best["Ticker"].unique())
         
@@ -190,7 +209,7 @@ else:
         st.markdown(f"**Available Futures Contracts for {selected_stock} (Sorted by Net XIRR):**")
         st.dataframe(df_stock_expiries, use_container_width=True)
 
-    with tab3:
+    elif selected_tab == "📥 Model Training & Paper Trades":
         st.subheader("Paper Trading & Model Logging Engine")
         
         # --- PAPER TRADE TOP 3 ---
@@ -219,7 +238,6 @@ else:
                 st.markdown("**Current Stored Log Entries:**")
                 st.dataframe(df_log, use_container_width=True)
                 
-                # Multi-select options to delete specific rows based on Timestamp & Contract
                 df_log["Identifier"] = df_log["Timestamp"] + " | " + df_log["Ticker"] + " | " + df_log["Contract"]
                 rows_to_delete = st.multiselect("Select log entries to delete:", options=df_log["Identifier"].tolist())
                 
