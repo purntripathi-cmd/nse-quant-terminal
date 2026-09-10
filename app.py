@@ -9,7 +9,7 @@ import pytz
 st.set_page_config(page_title="Live Nifty Arbitrage Terminal", layout="wide")
 
 st.title("Live Nifty Cash-Futures Multi-Expiry Arbitrage Terminal")
-st.markdown("Scans live intraday F&O universe, tracks automated vs. manual triggers, syncs paper trades, and logs data.")
+st.markdown("Scans live intraday F&O universe, tracks trade logs with trigger source indicators, and allows selective deletion or full clearance.")
 
 # --- IST TIMEZONE HELPER ---
 def get_ist_time():
@@ -189,7 +189,6 @@ def fetch_live_intraday_arbitrage(tickers):
 
 df_best, df_all = fetch_live_intraday_arbitrage(universe_tickers)
 
-# If running headlessly via GitHub Actions, exit cleanly after logging
 if IS_GITHUB_ACTIONS:
     print("Headless GitHub Actions execution complete. State logged successfully.")
     import sys
@@ -251,9 +250,11 @@ else:
             paper_file = "paper_trades.csv"
             log_file = "arbitrage_log.csv"
             current_time_ist = get_ist_time()
+            trigger_type = "Manual (UI / Refresh)"
             
             top_3_trades = df_best.head(3)[["Ticker", "Contract Name", "Total Capital Required (₹)", "Net Return (%)", "Net XIRR (%)"]].copy()
             top_3_trades["Entry Timestamp (IST)"] = current_time_ist
+            top_3_trades["Trigger Source"] = trigger_type
             top_3_trades["Status"] = "ACTIVE"
             
             if os.path.exists(paper_file):
@@ -279,7 +280,7 @@ else:
             for _, row in df_best.head(3).iterrows():
                 manual_logs.append({
                     "Timestamp (IST)": current_time_ist,
-                    "Trigger Source": "Manual (UI / Refresh)",
+                    "Trigger Source": trigger_type,
                     "Ticker": row["Ticker"],
                     "Contract": row["Contract Name"],
                     "Net XIRR (%)": row["Net XIRR (%)"]
@@ -292,10 +293,48 @@ else:
             st.success("Paper trades triggered, deduplicated in active portfolio, and recorded in history logs!")
             st.rerun()
 
-        if os.path.exists("paper_trades.csv"):
+        # --- PAPER TRADING PORTFOLIO MANAGEMENT ---
+        paper_file = "paper_trades.csv"
+        if os.path.exists(paper_file):
             st.markdown("**Active Paper Trading Portfolio:**")
-            df_paper = pd.read_csv("paper_trades.csv")
-            st.dataframe(df_paper, use_container_width=True)
+            df_paper = pd.read_csv(paper_file)
+            if not df_paper.empty:
+                df_paper = df_paper.reset_index(drop=True)
+                df_paper["Trade_ID"] = df_paper.index
+                
+                t_time = "Entry Timestamp (IST)" if "Entry Timestamp (IST)" in df_paper.columns else df_paper.columns[0]
+                t_ticker = "Ticker" if "Ticker" in df_paper.columns else df_paper.columns[1]
+                t_contract = "Contract Name" if "Contract Name" in df_paper.columns else df_paper.columns[2]
+                
+                selected_paper_indices = st.multiselect(
+                    "Select trade IDs to delete from paper portfolio:", 
+                    options=df_paper["Trade_ID"].tolist(),
+                    format_func=lambda x: f"Trade {x} | Time: {df_paper.loc[x, t_time]} | Ticker: {df_paper.loc[x, t_ticker]} | Contract: {df_paper.loc[x, t_contract]}"
+                )
+                
+                st.dataframe(df_paper.drop(columns=["Trade_ID"]), use_container_width=True)
+                
+                col_p1, col_p2 = st.columns(2)
+                with col_p1:
+                    if st.button("🗑️ Delete Selected Paper Trades"):
+                        if selected_paper_indices:
+                            df_paper = df_paper[~df_paper["Trade_ID"].isin(selected_paper_indices)]
+                            df_paper = df_paper.drop(columns=["Trade_ID"])
+                            df_paper.to_csv(paper_file, index=False)
+                            st.success("Selected paper trades deleted successfully.")
+                            st.rerun()
+                        else:
+                            st.warning("Please select at least one trade ID to delete.")
+                with col_p2:
+                    if st.button("🔥 Clear All Paper Trades"):
+                        if os.path.exists(paper_file):
+                            os.remove(paper_file)
+                            st.success("All paper trades cleared successfully.")
+                            st.rerun()
+            else:
+                st.info("Paper trading portfolio is currently empty.")
+        else:
+            st.info("No paper trades executed yet.")
 
         st.markdown("---")
         st.subheader("Manage & Clean Logged Data (`arbitrage_log.csv`)")
@@ -329,15 +368,23 @@ else:
                 
                 st.dataframe(df_log.drop(columns=["Row_ID"]), use_container_width=True)
                 
-                if st.button("🗑️ Delete Selected Rows from Log"):
-                    if selected_indices:
-                        df_log = df_log[~df_log["Row_ID"].isin(selected_indices)]
-                        df_log = df_log.drop(columns=["Row_ID"])
-                        df_log.to_csv(log_file, index=False)
-                        st.success("Selected rows successfully deleted from CSV log.")
-                        st.rerun()
-                    else:
-                        st.warning("Please select at least one row ID to delete.")
+                col_l1, col_l2 = st.columns(2)
+                with col_l1:
+                    if st.button("🗑️ Delete Selected Rows from Log"):
+                        if selected_indices:
+                            df_log = df_log[~df_log["Row_ID"].isin(selected_indices)]
+                            df_log = df_log.drop(columns=["Row_ID"])
+                            df_log.to_csv(log_file, index=False)
+                            st.success("Selected rows successfully deleted from CSV log.")
+                            st.rerun()
+                        else:
+                            st.warning("Please select at least one row ID to delete.")
+                with col_l2:
+                    if st.button("🔥 Clear All Log Entries"):
+                        if os.path.exists(log_file):
+                            os.remove(log_file)
+                            st.success("All log entries cleared successfully.")
+                            st.rerun()
             else:
                 st.info("Log file is currently empty.")
         else:
