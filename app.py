@@ -7,7 +7,7 @@ from datetime import datetime
 st.set_page_config(page_title="NSE Multi-Expiry Arbitrage Terminal", layout="wide")
 
 st.title("NSE Cash-Futures Multi-Expiry Arbitrage Terminal")
-st.markdown("Scans multiple futures expiries, computes exact capital required for 1 lot (Spot + Future Margin), deducts statutory charges, and ranks net XIRR yields.")
+st.markdown("Scans multiple futures expiries, computes integer capital required for 1 lot, details explicit charge drag, and ranks net XIRR yields.")
 
 # --- SIDEBAR CONTROLS ---
 st.sidebar.header("Terminal Controls")
@@ -31,7 +31,7 @@ lot_sizes = {
     "KOTAKBANK": 400
 }
 
-# --- MULTI-EXPIRY EVALUATION & CAPITAL ENGINE ---
+# --- MULTI-EXPIRY EVALUATION & CHARGE AUDIT ENGINE ---
 @st.cache_data(ttl=300)
 def scan_multi_expiry_arbitrage(tickers):
     all_contracts = []
@@ -58,7 +58,6 @@ def scan_multi_expiry_arbitrage(tickers):
             
             stock_contracts = []
             for exp in expiries:
-                # Simulating realistic basis spread variance across expiries
                 np.random.seed(hash(exp["name"]) % 2**32)
                 basis_spread_pct = np.random.uniform(-0.05, 1.15)
                 futures_price = spot_price * (1 + (basis_spread_pct / 100.0))
@@ -66,12 +65,12 @@ def scan_multi_expiry_arbitrage(tickers):
                 spread_inr = futures_price - spot_price
                 days_to_expiry = exp["days"]
                 
-                # Capital Required for 1 Lot: Spot Investment + Future Margin (~20% span+exposure)
+                # Capital Required for 1 Lot: Rounded to nearest integer (no decimals)
                 spot_investment = spot_price * lot_size
                 future_margin = futures_price * lot_size * 0.20
-                total_capital_required = spot_investment + future_margin
+                total_capital_required = int(round(spot_investment + future_margin))
                 
-                # Zerodha Future & Option / Delivery Charge Model
+                # Zerodha Future & Option / Delivery Charge Breakdown
                 turnover = spot_investment + (futures_price * lot_size)
                 brokerage = 40.0  # ₹20 entry + ₹20 exit
                 stt = turnover * 0.0001 if basis_spread_pct > 0 else turnover * 0.002
@@ -80,6 +79,10 @@ def scan_multi_expiry_arbitrage(tickers):
                 stamp_duty = spot_investment * 0.00015
                 gst = (brokerage + exchange_charges + sebi) * 0.18
                 total_charges = brokerage + stt + exchange_charges + sebi + stamp_duty + gst
+                
+                # Charge Drag as % of Capital Required
+                charge_drag_pct = round((total_charges / total_capital_required) * 100, 2)
+                charges_summary = f"Brokerage(₹40)+STT({stt/turnover*100:.2f}%)+Exchange+Stamp+GST ({charge_drag_pct}%)"
                 
                 gross_arbitrage_profit = lot_size * spread_inr
                 net_profit = gross_arbitrage_profit - total_charges
@@ -90,10 +93,11 @@ def scan_multi_expiry_arbitrage(tickers):
                     "Ticker": ticker_clean,
                     "Contract Name": exp["name"],
                     "Lot Size": lot_size,
-                    "Total Capital Required (₹)": round(total_capital_required, 2),
+                    "Total Capital Required (₹)": total_capital_required,
                     "Spot Price (₹)": round(spot_price, 2),
                     "Future Price (₹)": round(futures_price, 2),
                     "Basis Spread (%)": round(basis_spread_pct, 2),
+                    "Charges Considered & Drag (%)": charges_summary,
                     "Net Profit (₹)": round(net_profit, 2),
                     "Net Return (%)": round(net_return_pct, 2),
                     "Net XIRR (%)": round(net_xirr, 2),
@@ -101,7 +105,6 @@ def scan_multi_expiry_arbitrage(tickers):
                 stock_contracts.append(contract_data)
                 all_contracts.append(contract_data)
             
-            # Find the best expiry option for this stock based on Net XIRR
             best_contract = max(stock_contracts, key=lambda x: x["Net XIRR (%)"])
             best_stocks.append(best_contract)
             
@@ -141,7 +144,6 @@ else:
         st.subheader("Multi-Expiry Options Comparison by Stock")
         selected_stock = st.selectbox("Select Ticker for Expiry Breakdown", df_best["Ticker"].unique())
         
-        # Filter all contracts for the selected stock and sort by best return
         df_stock_expiries = df_all[df_all["Ticker"] == selected_stock].sort_values(by="Net XIRR (%)", ascending=False)
         
         st.markdown(f"**Available Futures Contracts for {selected_stock} (Sorted by Best Return):**")
