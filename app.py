@@ -4,11 +4,17 @@ import pandas as pd
 import numpy as np
 import os
 from datetime import datetime
+import pytz
 
 st.set_page_config(page_title="Live Nifty Arbitrage Terminal", layout="wide")
 
 st.title("Live Nifty Cash-Futures Multi-Expiry Arbitrage Terminal")
-st.markdown("Scans live intraday F&O universe, sorts by Net XIRR, executes paper trades for top 3, manages logs, and tracks performance.")
+st.markdown("Scans live intraday F&O universe, sorts by Net XIRR, syncs paper trades with CSV logs, and tracks performance.")
+
+# --- IST TIMEZONE HELPER ---
+def get_ist_time():
+    ist = pytz.timezone('Asia/Kolkata')
+    return datetime.now(ist).strftime('%Y-%m-%d %H:%M:%S IST')
 
 # --- PERSISTENT NAVIGATION STATE ---
 if "active_nav" not in st.session_state:
@@ -45,7 +51,7 @@ def log_state_to_csv(df_best):
     
     top_pick = df_best.head(1).iloc[0]
     current_state = {
-        "Timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        "Timestamp (IST)": get_ist_time(),
         "Ticker": top_pick["Ticker"],
         "Contract": top_pick["Contract Name"],
         "Net XIRR (%)": top_pick["Net XIRR (%)"]
@@ -104,7 +110,6 @@ def fetch_live_intraday_arbitrage(tickers):
                 future_margin = futures_price * lot_size * 0.20
                 total_capital_required = int(round(spot_investment + future_margin))
                 
-                # Zerodha Charge & Statutory Tax Model
                 turnover = spot_investment + (futures_price * lot_size)
                 brokerage = 40.0
                 stt = turnover * 0.0001 if basis_spread_pct > 0 else turnover * 0.002
@@ -212,16 +217,34 @@ else:
     elif selected_tab == "📥 Model Training & Paper Trades":
         st.subheader("Paper Trading & Model Logging Engine")
         
-        # --- PAPER TRADE TOP 3 ---
+        # --- PAPER TRADE TOP 3 (ALSO LOGGING TO arbitrage_log.csv) ---
         st.markdown("### 🚀 Execute Paper Trade for Current Top 3 Opportunities")
         if st.button("Trigger Paper Trade for Top 3"):
             paper_file = "paper_trades.csv"
+            log_file = "arbitrage_log.csv"
+            
+            current_time_ist = get_ist_time()
             top_3_trades = df_best.head(3)[["Ticker", "Contract Name", "Total Capital Required (₹)", "Net Return (%)", "Net XIRR (%)"]].copy()
-            top_3_trades["Entry Timestamp"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            top_3_trades["Entry Timestamp (IST)"] = current_time_ist
             top_3_trades["Status"] = "ACTIVE"
             
+            # Save to paper trades
             top_3_trades.to_csv(paper_file, mode='a', header=not os.path.exists(paper_file), index=False)
-            st.success("Paper trades successfully executed and logged for the top 3 opportunities!")
+            
+            # Also log manual trigger to arbitrage_log.csv so both match
+            manual_logs = []
+            for _, row in df_best.head(3).iterrows():
+                manual_logs.append({
+                    "Timestamp (IST)": current_time_ist,
+                    "Ticker": row["Ticker"],
+                    "Contract": row["Contract Name"],
+                    "Net XIRR (%)": row["Net XIRR (%)"]
+                })
+            df_manual_log = pd.DataFrame(manual_logs)
+            df_manual_log.to_csv(log_file, mode='a', header=not os.path.exists(log_file), index=False)
+            
+            st.success("Paper trades triggered, logged to active portfolio, and recorded in arbitrage history logs!")
+            st.rerun()
 
         if os.path.exists("paper_trades.csv"):
             st.markdown("**Active Paper Trading Portfolio:**")
@@ -236,23 +259,31 @@ else:
             df_log = pd.read_csv(log_file)
             if not df_log.empty:
                 st.markdown("**Current Stored Log Entries:**")
-                st.dataframe(df_log, use_container_width=True)
                 
-                df_log["Identifier"] = df_log["Timestamp"] + " | " + df_log["Ticker"] + " | " + df_log["Contract"]
-                rows_to_delete = st.multiselect("Select log entries to delete:", options=df_log["Identifier"].tolist())
+                # Assign a unique integer index or row identifier safely
+                df_log["Row_ID"] = df_log.reset_index().index
+                
+                # Display dataframe with selection checkboxes or multi-select dropdown using row identifiers
+                selected_indices = st.multiselect(
+                    "Select row IDs to delete from log:", 
+                    options=df_log["Row_ID"].tolist(),
+                    format_func=lambda x: f"Row {x} | Time: {df_log.loc[x, 'Timestamp (IST)']} | Ticker: {df_log.loc[x, 'Ticker']} | Contract: {df_log.loc[x, 'Contract']}"
+                )
+                
+                st.dataframe(df_log.drop(columns=["Row_ID"]), use_container_width=True)
                 
                 if st.button("🗑️ Delete Selected Rows from Log"):
-                    if rows_to_delete:
-                        df_log = df_log[~df_log["Identifier"].isin(rows_to_delete)]
-                        df_log = df_log.drop(columns=["Identifier"])
+                    if selected_indices:
+                        df_log = df_log[~df_log["Row_ID"].isin(selected_indices)]
+                        df_log = df_log.drop(columns=["Row_ID"])
                         df_log.to_csv(log_file, index=False)
                         st.success("Selected rows successfully deleted from CSV log.")
                         st.rerun()
                     else:
-                        st.warning("Please select at least one entry to delete.")
+                        st.warning("Please select at least one row ID to delete.")
             else:
                 st.info("Log file is currently empty.")
         else:
             st.info("No arbitrage log file found yet.")
 
-    st.caption(f"Last live intraday synchronization: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} IST | Auto-refresh active every 5 minutes.")
+    st.caption(f"Last live intraday synchronization: {get_ist_time()} | Auto-refresh active every 5 minutes.")
