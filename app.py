@@ -50,10 +50,15 @@ def log_state_to_csv(df_best):
         return
     
     top_pick = df_best.head(1).iloc[0]
+    
+    # Handle column naming mismatch if loading from older CSV versions
+    timestamp_col = "Timestamp (IST)" if os.path.exists(log_file) and "Timestamp (IST)" in pd.read_csv(log_file, nrows=1).columns else "Timestamp"
+    contract_col = "Contract" if os.path.exists(log_file) and "Contract" in pd.read_csv(log_file, nrows=1).columns else "Contract Name"
+    
     current_state = {
-        "Timestamp (IST)": get_ist_time(),
+        timestamp_col: get_ist_time(),
         "Ticker": top_pick["Ticker"],
-        "Contract": top_pick["Contract Name"],
+        contract_col: top_pick["Contract Name"],
         "Net XIRR (%)": top_pick["Net XIRR (%)"]
     }
     
@@ -62,7 +67,8 @@ def log_state_to_csv(df_best):
             df_log = pd.read_csv(log_file)
             if not df_log.empty:
                 last_row = df_log.iloc[-1]
-                if last_row["Contract"] == current_state["Contract"] and abs(last_row["Net XIRR (%)"] - current_state["Net XIRR (%)"]) < 0.05:
+                last_contract = last_row.get("Contract", last_row.get("Contract Name", ""))
+                if last_contract == current_state[contract_col] and abs(last_row["Net XIRR (%)"] - current_state["Net XIRR (%)"]) < 0.05:
                     return 
         except Exception:
             pass
@@ -228,10 +234,9 @@ else:
             top_3_trades["Entry Timestamp (IST)"] = current_time_ist
             top_3_trades["Status"] = "ACTIVE"
             
-            # Save to paper trades
             top_3_trades.to_csv(paper_file, mode='a', header=not os.path.exists(paper_file), index=False)
             
-            # Also log manual trigger to arbitrage_log.csv so both match
+            # Ensure unified logging format for arbitrage log
             manual_logs = []
             for _, row in df_best.head(3).iterrows():
                 manual_logs.append({
@@ -260,14 +265,23 @@ else:
             if not df_log.empty:
                 st.markdown("**Current Stored Log Entries:**")
                 
-                # Assign a unique integer index or row identifier safely
-                df_log["Row_ID"] = df_log.reset_index().index
+                # Standardize column names dynamically if old format exists
+                if "Timestamp" in df_log.columns and "Timestamp (IST)" not in df_log.columns:
+                    df_log.rename(columns={"Timestamp": "Timestamp (IST)"}, inplace=True)
+                if "Contract Name" in df_log.columns and "Contract" not in df_log.columns:
+                    df_log.rename(columns={"Contract Name": "Contract"}, inplace=True)
                 
-                # Display dataframe with selection checkboxes or multi-select dropdown using row identifiers
+                df_log["Row_ID"] = range(len(df_log))
+                
+                # Safely extract column fields with defaults if missing
+                time_col = "Timestamp (IST)" if "Timestamp (IST)" in df_log.columns else df_log.columns[0]
+                ticker_col = "Ticker" if "Ticker" in df_log.columns else df_log.columns[1]
+                contract_col = "Contract" if "Contract" in df_log.columns else df_log.columns[2]
+                
                 selected_indices = st.multiselect(
                     "Select row IDs to delete from log:", 
                     options=df_log["Row_ID"].tolist(),
-                    format_func=lambda x: f"Row {x} | Time: {df_log.loc[x, 'Timestamp (IST)']} | Ticker: {df_log.loc[x, 'Ticker']} | Contract: {df_log.loc[x, 'Contract']}"
+                    format_func=lambda x: f"Row {x} | Time: {df_log.loc[x, time_col]} | Ticker: {df_log.loc[x, ticker_col]} | Contract: {df_log.loc[x, contract_col]}"
                 )
                 
                 st.dataframe(df_log.drop(columns=["Row_ID"]), use_container_width=True)
