@@ -9,7 +9,7 @@ import pytz
 st.set_page_config(page_title="Live Nifty Arbitrage Terminal", layout="wide")
 
 st.title("Live Nifty Cash-Futures Multi-Expiry Arbitrage Terminal")
-st.markdown("Scans live intraday F&O universe, tracks trade logs with trigger source indicators, and allows selective deletion or full clearance.")
+st.markdown("Scans live intraday F&O universe, tracks trade logs with trigger source indicators, and provides performance KPIs.")
 
 # --- IST TIMEZONE HELPER ---
 def get_ist_time():
@@ -337,12 +337,27 @@ else:
             st.info("No paper trades executed yet.")
 
         st.markdown("---")
-        st.subheader("Manage & Clean Logged Data (`arbitrage_log.csv`)")
+        st.subheader("Manage & Clean Logged Data (`arbitrage_log.csv`) & Performance KPIs")
         
         log_file = "arbitrage_log.csv"
         if os.path.exists(log_file):
             df_log = pd.read_csv(log_file)
             if not df_log.empty:
+                # --- PERFORMANCE KPIS ---
+                st.markdown("### 📈 Log Performance KPIs")
+                total_logs = len(df_log)
+                auto_logs = len(df_log[df_log["Trigger Source"].str.contains("Automated", na=False)]) if "Trigger Source" in df_log.columns else 0
+                manual_logs_count = total_logs - auto_logs
+                avg_xirr = df_log["Net XIRR (%)"].mean() if "Net XIRR (%)" in df_log.columns else 0.0
+                max_xirr = df_log["Net XIRR (%)"].max() if "Net XIRR (%)" in df_log.columns else 0.0
+                
+                kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+                kpi1.metric("Total Snapshots Logged", total_logs)
+                kpi2.metric("Automated Runs (GH Actions)", auto_logs)
+                kpi3.metric("Average Logged XIRR", f"{avg_xirr:.2f}%")
+                kpi4.metric("Peak Logged XIRR", f"{max_xirr:.2f}%")
+                
+                st.markdown("---")
                 st.markdown("**Current Stored Log Entries:**")
                 
                 if "Timestamp" in df_log.columns and "Timestamp (IST)" not in df_log.columns:
