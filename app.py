@@ -9,22 +9,32 @@ import pytz
 st.set_page_config(page_title="Live Nifty Arbitrage Terminal", layout="wide")
 
 st.title("Live Nifty Cash-Futures Multi-Expiry Arbitrage Terminal")
-st.markdown("Scans live intraday F&O universe, sorts by Net XIRR, syncs paper trades with CSV logs, and tracks performance.")
+st.markdown("Scans live intraday F&O universe, tracks automated vs. manual triggers, syncs paper trades, and logs data.")
 
 # --- IST TIMEZONE HELPER ---
 def get_ist_time():
     ist = pytz.timezone('Asia/Kolkata')
     return datetime.now(ist).strftime('%Y-%m-%d %H:%M:%S IST')
 
+# --- TRIGGER SOURCE DETECTION ---
+IS_GITHUB_ACTIONS = os.environ.get('GITHUB_ACTIONS') == 'true'
+
 # --- PERSISTENT NAVIGATION STATE ---
 if "active_nav" not in st.session_state:
     st.session_state.active_nav = "📊 Market Scanner & Rankings"
 
-# --- SIDEBAR CONTROLS ---
+# --- SIDEBAR CONTROLS & STATUS INDICATOR ---
 st.sidebar.header("Terminal Controls")
 if st.sidebar.button("🔄 Force Live Refresh"):
     st.cache_data.clear()
     st.sidebar.success("Cache cleared. Fetching fresh live market ticks...")
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("System Status Indicator")
+if IS_GITHUB_ACTIONS:
+    st.sidebar.info("🤖 Running via **Automated GitHub Actions** Trigger")
+else:
+    st.sidebar.success("💻 Running via **Manual UI / Local** Trigger")
 
 # Comprehensive Nifty F&O Universe Tickers
 universe_tickers = [
@@ -43,20 +53,20 @@ lot_sizes = {
     "ASIANPAINT": 300, "M&M": 350, "HCLTECH": 350, "WIPRO": 1500, "ADANIENT": 250
 }
 
-# --- AUTOMATED CSV DEDUPLICATED LOGGER ---
+# --- AUTOMATED CSV DEDUPLICATED LOGGER WITH TRIGGER SOURCE ---
 def log_state_to_csv(df_best):
     log_file = "arbitrage_log.csv"
     if df_best.empty:
         return
     
     top_pick = df_best.head(1).iloc[0]
-    timestamp_col = "Timestamp (IST)"
-    contract_col = "Contract"
+    trigger_type = "Automated (GitHub Actions)" if IS_GITHUB_ACTIONS else "Manual (UI / Refresh)"
     
     current_state = pd.DataFrame([{
-        timestamp_col: get_ist_time(),
+        "Timestamp (IST)": get_ist_time(),
+        "Trigger Source": trigger_type,
         "Ticker": top_pick["Ticker"],
-        contract_col: top_pick["Contract Name"],
+        "Contract": top_pick["Contract Name"],
         "Net XIRR (%)": top_pick["Net XIRR (%)"]
     }])
     
@@ -67,8 +77,9 @@ def log_state_to_csv(df_best):
                 df_log.rename(columns={"Timestamp": "Timestamp (IST)"}, inplace=True)
             if "Contract Name" in df_log.columns and "Contract" not in df_log.columns:
                 df_log.rename(columns={"Contract Name": "Contract"}, inplace=True)
+            if "Trigger Source" not in df_log.columns:
+                df_log["Trigger Source"] = "Manual (UI / Refresh)"
                 
-            # Check if contract already exists to prevent duplicates
             if not df_log.empty and (df_log["Contract"] == top_pick["Contract Name"]).any():
                 return
                 
@@ -78,7 +89,6 @@ def log_state_to_csv(df_best):
     else:
         df_log = current_state
         
-    # Enforce strict global deduplication by Ticker & Contract
     df_log = df_log.drop_duplicates(subset=["Ticker", "Contract"], keep="last")
     df_log.to_csv(log_file, index=False)
 
@@ -179,6 +189,12 @@ def fetch_live_intraday_arbitrage(tickers):
 
 df_best, df_all = fetch_live_intraday_arbitrage(universe_tickers)
 
+# If running headlessly via GitHub Actions, exit cleanly after logging
+if IS_GITHUB_ACTIONS:
+    print("Headless GitHub Actions execution complete. State logged successfully.")
+    import sys
+    sys.exit(0)
+
 if df_best.empty:
     st.warning("Market feeds currently syncing or market closed. Click 'Force Live Refresh' in sidebar to retry.")
 else:
@@ -236,7 +252,6 @@ else:
             log_file = "arbitrage_log.csv"
             current_time_ist = get_ist_time()
             
-            # 1. Update Paper Trades with deduplication
             top_3_trades = df_best.head(3)[["Ticker", "Contract Name", "Total Capital Required (₹)", "Net Return (%)", "Net XIRR (%)"]].copy()
             top_3_trades["Entry Timestamp (IST)"] = current_time_ist
             top_3_trades["Status"] = "ACTIVE"
@@ -249,20 +264,22 @@ else:
             df_paper = df_paper.drop_duplicates(subset=["Ticker", "Contract Name"], keep="last")
             df_paper.to_csv(paper_file, index=False)
             
-            # 2. Update Arbitrage Logs with deduplication
             if os.path.exists(log_file):
                 df_log = pd.read_csv(log_file)
                 if "Timestamp" in df_log.columns and "Timestamp (IST)" not in df_log.columns:
                     df_log.rename(columns={"Timestamp": "Timestamp (IST)"}, inplace=True)
                 if "Contract Name" in df_log.columns and "Contract" not in df_log.columns:
                     df_log.rename(columns={"Contract Name": "Contract"}, inplace=True)
+                if "Trigger Source" not in df_log.columns:
+                    df_log["Trigger Source"] = "Manual (UI / Refresh)"
             else:
-                df_log = pd.DataFrame(columns=["Timestamp (IST)", "Ticker", "Contract", "Net XIRR (%)"])
+                df_log = pd.DataFrame(columns=["Timestamp (IST)", "Trigger Source", "Ticker", "Contract", "Net XIRR (%)"])
                 
             manual_logs = []
             for _, row in df_best.head(3).iterrows():
                 manual_logs.append({
                     "Timestamp (IST)": current_time_ist,
+                    "Trigger Source": "Manual (UI / Refresh)",
                     "Ticker": row["Ticker"],
                     "Contract": row["Contract Name"],
                     "Net XIRR (%)": row["Net XIRR (%)"]
@@ -293,19 +310,21 @@ else:
                     df_log.rename(columns={"Timestamp": "Timestamp (IST)"}, inplace=True)
                 if "Contract Name" in df_log.columns and "Contract" not in df_log.columns:
                     df_log.rename(columns={"Contract Name": "Contract"}, inplace=True)
+                if "Trigger Source" not in df_log.columns:
+                    df_log["Trigger Source"] = "Manual (UI / Refresh)"
                 
-                # Safely reset index for clean row selection
                 df_log = df_log.reset_index(drop=True)
                 df_log["Row_ID"] = df_log.index
                 
                 time_col = "Timestamp (IST)" if "Timestamp (IST)" in df_log.columns else df_log.columns[0]
-                ticker_col = "Ticker" if "Ticker" in df_log.columns else df_log.columns[1]
-                contract_col = "Contract" if "Contract" in df_log.columns else df_log.columns[2]
+                trigger_col = "Trigger Source" if "Trigger Source" in df_log.columns else df_log.columns[1]
+                ticker_col = "Ticker" if "Ticker" in df_log.columns else df_log.columns[2]
+                contract_col = "Contract" if "Contract" in df_log.columns else df_log.columns[3]
                 
                 selected_indices = st.multiselect(
                     "Select row IDs to delete from log:", 
                     options=df_log["Row_ID"].tolist(),
-                    format_func=lambda x: f"Row {x} | Time: {df_log.loc[x, time_col]} | Ticker: {df_log.loc[x, ticker_col]} | Contract: {df_log.loc[x, contract_col]}"
+                    format_func=lambda x: f"Row {x} | [{df_log.loc[x, trigger_col]}] Time: {df_log.loc[x, time_col]} | Ticker: {df_log.loc[x, ticker_col]}"
                 )
                 
                 st.dataframe(df_log.drop(columns=["Row_ID"]), use_container_width=True)
