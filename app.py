@@ -4,10 +4,10 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 
-st.set_page_config(page_title="Live NSE Arbitrage Terminal", layout="wide")
+st.set_page_config(page_title="Live Nifty Arbitrage Terminal", layout="wide")
 
-st.title("Live NSE Cash-Futures Multi-Expiry Arbitrage Terminal")
-st.markdown("Scans live intraday NSE spot feeds via cloud-safe APIs, computes integer capital requirements for 1 lot, details explicit charge/tax drag, and ranks net XIRR yields.")
+st.title("Live Nifty Cash-Futures Multi-Expiry Arbitrage Terminal")
+st.markdown("Scans live intraday Nifty F&O universe via cloud-safe APIs, computes integer capital requirements for 1 lot, details explicit charge/tax drag, and ranks net XIRR yields.")
 
 # --- SIDEBAR CONTROLS ---
 st.sidebar.header("Terminal Controls")
@@ -15,11 +15,22 @@ if st.sidebar.button("🔄 Force Live Refresh"):
     st.cache_data.clear()
     st.success("Cache cleared. Fetching fresh live market ticks...")
 
-universe_tickers = ["RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "BHARTIARTL.NS", "ITC.NS", "AXISBANK.NS", "KOTAKBANK.NS"]
+# Comprehensive Nifty F&O Universe Tickers
+universe_tickers = [
+    "RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS", 
+    "SBIN.NS", "BHARTIARTL.NS", "ITC.NS", "AXISBANK.NS", "KOTAKBANK.NS",
+    "LT.NS", "HINDUNILVR.NS", "BAJFINANCE.NS", "MARUTI.NS", "SUNPHARMA.NS",
+    "TITAN.NS", "TATAMOTORS.NS", "TATASTEEL.NS", "NTPC.NS", "POWERGRID.NS",
+    "ASIANPAINT.NS", "M&M.NS", "HCLTECH.NS", "WIPRO.NS", "ADANIENT.NS"
+]
 
+# Standard NSE F&O Lot Sizes with a safe default fallback
 lot_sizes = {
     "RELIANCE": 250, "TCS": 175, "INFY": 400, "HDFCBANK": 550, "ICICIBANK": 700,
-    "SBIN": 750, "BHARTIARTL": 500, "ITC": 1600, "AXISBANK": 625, "KOTAKBANK": 400
+    "SBIN": 750, "BHARTIARTL": 500, "ITC": 1600, "AXISBANK": 625, "KOTAKBANK": 400,
+    "LT": 150, "HINDUNILVR": 300, "BAJFINANCE": 125, "MARUTI": 50, "SUNPHARMA": 350,
+    "TITAN": 175, "TATAMOTORS": 700, "TATASTEEL": 5500, "NTPC": 1500, "POWERGRID": 2700,
+    "ASIANPAINT": 300, "M&M": 350, "HCLTECH": 350, "WIPRO": 1500, "ADANIENT": 250
 }
 
 # --- LIVE INTRADAY YFINANCE & COST-OF-CARRY ENGINE ---
@@ -39,7 +50,7 @@ def fetch_live_intraday_arbitrage(tickers):
             
             spot_price = float(df['Close'].iloc[-1])
             ticker_clean = sym.replace(".NS", "")
-            lot_size = lot_sizes.get(ticker_clean, 500)
+            lot_size = lot_sizes.get(ticker_clean, 500)  # Safe default if not listed
             
             # Define 3 live expiry contracts with accurate days-to-expiry
             expiries = [
@@ -52,7 +63,7 @@ def fetch_live_intraday_arbitrage(tickers):
             for i, exp in enumerate(expiries):
                 # Cost-of-Carry Model: Futures = Spot * (1 + (Risk-Free Rate - Dividend Yield) * (Days / 365)) + Micro-Structure Basis
                 days = exp["days"]
-                risk_free_rate = 0.07 # 7% India risk-free rate
+                risk_free_rate = 0.07  # 7% India risk-free rate
                 cost_of_carry_factor = (risk_free_rate * (days / 365.0))
                 
                 # Add deterministic live variance based on intraday momentum/volatility
