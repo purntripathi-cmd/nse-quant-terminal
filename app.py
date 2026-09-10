@@ -43,38 +43,44 @@ lot_sizes = {
     "ASIANPAINT": 300, "M&M": 350, "HCLTECH": 350, "WIPRO": 1500, "ADANIENT": 250
 }
 
-# --- AUTOMATED CSV STATE-CHANGE LOGGER ---
+# --- AUTOMATED CSV DEDUPLICATED LOGGER ---
 def log_state_to_csv(df_best):
     log_file = "arbitrage_log.csv"
     if df_best.empty:
         return
     
     top_pick = df_best.head(1).iloc[0]
+    timestamp_col = "Timestamp (IST)"
+    contract_col = "Contract"
     
-    # Handle column naming mismatch if loading from older CSV versions
-    timestamp_col = "Timestamp (IST)" if os.path.exists(log_file) and "Timestamp (IST)" in pd.read_csv(log_file, nrows=1).columns else "Timestamp"
-    contract_col = "Contract" if os.path.exists(log_file) and "Contract" in pd.read_csv(log_file, nrows=1).columns else "Contract Name"
-    
-    current_state = {
+    current_state = pd.DataFrame([{
         timestamp_col: get_ist_time(),
         "Ticker": top_pick["Ticker"],
         contract_col: top_pick["Contract Name"],
         "Net XIRR (%)": top_pick["Net XIRR (%)"]
-    }
+    }])
     
     if os.path.exists(log_file):
         try:
             df_log = pd.read_csv(log_file)
-            if not df_log.empty:
-                last_row = df_log.iloc[-1]
-                last_contract = last_row.get("Contract", last_row.get("Contract Name", ""))
-                if last_contract == current_state[contract_col] and abs(last_row["Net XIRR (%)"] - current_state["Net XIRR (%)"]) < 0.05:
-                    return 
-        except Exception:
-            pass
+            if "Timestamp" in df_log.columns and "Timestamp (IST)" not in df_log.columns:
+                df_log.rename(columns={"Timestamp": "Timestamp (IST)"}, inplace=True)
+            if "Contract Name" in df_log.columns and "Contract" not in df_log.columns:
+                df_log.rename(columns={"Contract Name": "Contract"}, inplace=True)
                 
-    new_df = pd.DataFrame([current_state])
-    new_df.to_csv(log_file, mode='a', header=not os.path.exists(log_file), index=False)
+            # Check if contract already exists to prevent duplicates
+            if not df_log.empty and (df_log["Contract"] == top_pick["Contract Name"]).any():
+                return
+                
+            df_log = pd.concat([df_log, current_state], ignore_index=True)
+        except Exception:
+            df_log = current_state
+    else:
+        df_log = current_state
+        
+    # Enforce strict global deduplication by Ticker & Contract
+    df_log = df_log.drop_duplicates(subset=["Ticker", "Contract"], keep="last")
+    df_log.to_csv(log_file, index=False)
 
 # --- LIVE INTRADAY YFINANCE & ADVANCED ANALYTICS ENGINE ---
 @st.cache_data(ttl=60)
@@ -223,20 +229,36 @@ else:
     elif selected_tab == "📥 Model Training & Paper Trades":
         st.subheader("Paper Trading & Model Logging Engine")
         
-        # --- PAPER TRADE TOP 3 (ALSO LOGGING TO arbitrage_log.csv) ---
+        # --- PAPER TRADE TOP 3 (DEDUPLICATED LOGGING) ---
         st.markdown("### 🚀 Execute Paper Trade for Current Top 3 Opportunities")
         if st.button("Trigger Paper Trade for Top 3"):
             paper_file = "paper_trades.csv"
             log_file = "arbitrage_log.csv"
-            
             current_time_ist = get_ist_time()
+            
+            # 1. Update Paper Trades with deduplication
             top_3_trades = df_best.head(3)[["Ticker", "Contract Name", "Total Capital Required (₹)", "Net Return (%)", "Net XIRR (%)"]].copy()
             top_3_trades["Entry Timestamp (IST)"] = current_time_ist
             top_3_trades["Status"] = "ACTIVE"
             
-            top_3_trades.to_csv(paper_file, mode='a', header=not os.path.exists(paper_file), index=False)
+            if os.path.exists(paper_file):
+                df_paper = pd.read_csv(paper_file)
+                df_paper = pd.concat([df_paper, top_3_trades], ignore_index=True)
+            else:
+                df_paper = top_3_trades
+            df_paper = df_paper.drop_duplicates(subset=["Ticker", "Contract Name"], keep="last")
+            df_paper.to_csv(paper_file, index=False)
             
-            # Ensure unified logging format for arbitrage log
+            # 2. Update Arbitrage Logs with deduplication
+            if os.path.exists(log_file):
+                df_log = pd.read_csv(log_file)
+                if "Timestamp" in df_log.columns and "Timestamp (IST)" not in df_log.columns:
+                    df_log.rename(columns={"Timestamp": "Timestamp (IST)"}, inplace=True)
+                if "Contract Name" in df_log.columns and "Contract" not in df_log.columns:
+                    df_log.rename(columns={"Contract Name": "Contract"}, inplace=True)
+            else:
+                df_log = pd.DataFrame(columns=["Timestamp (IST)", "Ticker", "Contract", "Net XIRR (%)"])
+                
             manual_logs = []
             for _, row in df_best.head(3).iterrows():
                 manual_logs.append({
@@ -246,9 +268,11 @@ else:
                     "Net XIRR (%)": row["Net XIRR (%)"]
                 })
             df_manual_log = pd.DataFrame(manual_logs)
-            df_manual_log.to_csv(log_file, mode='a', header=not os.path.exists(log_file), index=False)
+            df_log = pd.concat([df_log, df_manual_log], ignore_index=True)
+            df_log = df_log.drop_duplicates(subset=["Ticker", "Contract"], keep="last")
+            df_log.to_csv(log_file, index=False)
             
-            st.success("Paper trades triggered, logged to active portfolio, and recorded in arbitrage history logs!")
+            st.success("Paper trades triggered, deduplicated in active portfolio, and recorded in history logs!")
             st.rerun()
 
         if os.path.exists("paper_trades.csv"):
@@ -265,15 +289,15 @@ else:
             if not df_log.empty:
                 st.markdown("**Current Stored Log Entries:**")
                 
-                # Standardize column names dynamically if old format exists
                 if "Timestamp" in df_log.columns and "Timestamp (IST)" not in df_log.columns:
                     df_log.rename(columns={"Timestamp": "Timestamp (IST)"}, inplace=True)
                 if "Contract Name" in df_log.columns and "Contract" not in df_log.columns:
                     df_log.rename(columns={"Contract Name": "Contract"}, inplace=True)
                 
-                df_log["Row_ID"] = range(len(df_log))
+                # Safely reset index for clean row selection
+                df_log = df_log.reset_index(drop=True)
+                df_log["Row_ID"] = df_log.index
                 
-                # Safely extract column fields with defaults if missing
                 time_col = "Timestamp (IST)" if "Timestamp (IST)" in df_log.columns else df_log.columns[0]
                 ticker_col = "Ticker" if "Ticker" in df_log.columns else df_log.columns[1]
                 contract_col = "Contract" if "Contract" in df_log.columns else df_log.columns[2]
