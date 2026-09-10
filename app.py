@@ -2,12 +2,13 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import os
 from datetime import datetime
 
 st.set_page_config(page_title="Live Nifty Arbitrage Terminal", layout="wide")
 
 st.title("Live Nifty Cash-Futures Multi-Expiry Arbitrage Terminal")
-st.markdown("Scans live intraday Nifty F&O universe, sorts by Net XIRR, tracks execution logs for predictive modeling, and ranks top/bottom yields.")
+st.markdown("Scans live intraday F&O universe, sorts by Net XIRR, tracks execution logs, and automatically records changes to CSV for predictive modeling.")
 
 # --- SIDEBAR CONTROLS ---
 st.sidebar.header("Terminal Controls")
@@ -31,6 +32,36 @@ lot_sizes = {
     "TITAN": 175, "TATAMOTORS": 700, "TATASTEEL": 5500, "NTPC": 1500, "POWERGRID": 2700,
     "ASIANPAINT": 300, "M&M": 350, "HCLTECH": 350, "WIPRO": 1500, "ADANIENT": 250
 }
+
+# --- AUTOMATED CSV STATE-CHANGE LOGGER ---
+def log_state_to_csv(df_best):
+    log_file = "arbitrage_log.csv"
+    if df_best.empty:
+        return
+    
+    top_pick = df_best.head(1).iloc[0]
+    current_state = {
+        "Timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        "Ticker": top_pick["Ticker"],
+        "Contract": top_pick["Contract Name"],
+        "Net XIRR (%)": top_pick["Net XIRR (%)"]
+    }
+    
+    # Check if file exists and compare last state to avoid redundant logs
+    if os.path.exists(log_file):
+        try:
+            df_log = pd.read_csv(log_file)
+            if not df_log.empty:
+                last_row = df_log.iloc[-1]
+                # Discard if contract name is identical and XIRR shift is minimal (< 0.05%)
+                if last_row["Contract"] == current_state["Contract"] and abs(last_row["Net XIRR (%)"] - current_state["Net XIRR (%)"]) < 0.05:
+                    return 
+        except Exception:
+            pass
+                
+    # Append and save new state automatically
+    new_df = pd.DataFrame([current_state])
+    new_df.to_csv(log_file, mode='a', header=not os.path.exists(log_file), index=False)
 
 # --- LIVE INTRADAY YFINANCE & ADVANCED ANALYTICS ENGINE ---
 @st.cache_data(ttl=60)
@@ -122,6 +153,12 @@ def fetch_live_intraday_arbitrage(tickers):
     df_b = pd.DataFrame(best_stocks)
     if not df_b.empty:
         df_b = df_b.sort_values(by="Net XIRR (%)", ascending=False).reset_index(drop=True)
+        # Automatically invoke background CSV logging with change detection
+        try:
+            log_state_to_csv(df_b)
+        except Exception:
+            pass
+            
     return df_b, pd.DataFrame(all_contracts)
 
 df_best, df_all = fetch_live_intraday_arbitrage(universe_tickers)
