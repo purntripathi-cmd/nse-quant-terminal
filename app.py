@@ -7,7 +7,7 @@ from datetime import datetime
 st.set_page_config(page_title="Live Nifty Arbitrage Terminal", layout="wide")
 
 st.title("Live Nifty Cash-Futures Multi-Expiry Arbitrage Terminal")
-st.markdown("Scans live intraday Nifty F&O universe, sorts by Net Return, tracks execution logs for predictive modeling, and ranks top/bottom yields.")
+st.markdown("Scans live intraday Nifty F&O universe, sorts by Net XIRR, tracks execution logs for predictive modeling, and ranks top/bottom yields.")
 
 # --- SIDEBAR CONTROLS ---
 st.sidebar.header("Terminal Controls")
@@ -90,10 +90,10 @@ def fetch_live_intraday_arbitrage(tickers):
                 net_return_pct = (net_profit / total_capital_required) * 100
                 net_xirr = net_return_pct * (365 / days) if days > 0 else 0.0
                 
-                # --- NEW QUANTITATIVE & PREDICTIVE METRICS ---
+                # Quantitative & Predictive Metrics
                 implied_repo_rate = round((((futures_price / spot_price) ** (365 / days)) - 1) * 100, 2)
                 downside_risk_score = round(intraday_vol * np.sqrt(days), 2)
-                model_confidence = round(max(40.0, min(95.0, 100 - (downside_risk_score * 2) + (net_return_pct * 5))), 1)
+                model_confidence = round(max(40.0, min(95.0, 100 - (downside_risk_score * 2) + (net_xirr * 2))), 1)
                 
                 contract_data = {
                     "Ticker": ticker_clean,
@@ -114,14 +114,14 @@ def fetch_live_intraday_arbitrage(tickers):
                 all_contracts.append(contract_data)
                 
             if stock_contracts:
-                best_contract = max(stock_contracts, key=lambda x: x["Net Return (%)"])
+                best_contract = max(stock_contracts, key=lambda x: x["Net XIRR (%)"])
                 best_stocks.append(best_contract)
         except Exception:
             continue
             
     df_b = pd.DataFrame(best_stocks)
     if not df_b.empty:
-        df_b = df_b.sort_values(by="Net Return (%)", ascending=False).reset_index(drop=True)
+        df_b = df_b.sort_values(by="Net XIRR (%)", ascending=False).reset_index(drop=True)
     return df_b, pd.DataFrame(all_contracts)
 
 df_best, df_all = fetch_live_intraday_arbitrage(universe_tickers)
@@ -132,7 +132,7 @@ else:
     tab1, tab2, tab3 = st.tabs(["Market Arbitrage Scanner & Rankings", "Deep-Dive Expiry Comparison", "Model Training & Prediction Log"])
     
     with tab1:
-        st.subheader("Live Intraday Best Contract Scan Results per Stock (Sorted by Net Return)")
+        st.subheader("Live Intraday Best Contract Scan Results per Stock (Sorted by Net XIRR)")
         st.dataframe(df_best, use_container_width=True)
 
         st.markdown("---")
@@ -141,7 +141,7 @@ else:
         col_top, col_bottom = st.columns(2)
 
         with col_top:
-            st.markdown("**Top 3 Highest Net Return Opportunities**")
+            st.markdown("**Top 3 Highest Net XIRR Opportunities**")
             top_3 = df_best.head(3)
             st.table(top_3[["Ticker", "Contract Name", "Total Capital Required (₹)", "Net Return (%)", "Net XIRR (%)", "Model Confidence (%)"]])
 
@@ -154,8 +154,8 @@ else:
         st.subheader("Multi-Expiry Options Comparison by Stock")
         selected_stock = st.selectbox("Select Ticker for Expiry Breakdown", df_best["Ticker"].unique())
         
-        df_stock_expiries = df_all[df_all["Ticker"] == selected_stock].sort_values(by="Net Return (%)", ascending=False)
-        st.markdown(f"**Available Futures Contracts for {selected_stock} (Sorted by Best Return):**")
+        df_stock_expiries = df_all[df_all["Ticker"] == selected_stock].sort_values(by="Net XIRR (%)", ascending=False)
+        st.markdown(f"**Available Futures Contracts for {selected_stock} (Sorted by Net XIRR):**")
         st.dataframe(df_stock_expiries, use_container_width=True)
 
     with tab3:
@@ -166,7 +166,6 @@ else:
             log_snapshot = df_best.head(3)[["Ticker", "Contract Name", "Net Return (%)", "Net XIRR (%)", "Model Confidence (%)"]].copy()
             log_snapshot["Timestamp"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             
-            # Store in session state for cross-session tracking in cloud memory
             if "historical_logs" not in st.session_state:
                 st.session_state.historical_logs = pd.DataFrame()
             st.session_state.historical_logs = pd.concat([st.session_state.historical_logs, log_snapshot], ignore_index=True)
@@ -175,7 +174,7 @@ else:
         if "historical_logs" in st.session_state and not st.session_state.historical_logs.empty:
             st.markdown("**Historical Logged Predictions Database:**")
             st.dataframe(st.session_state.historical_logs, use_container_width=True)
-            st.info("💡 **ML Feature Pipeline Note:** Once these logged positions reach their contract expiry dates, compare the projected `Net Return (%)` against actual realized convergence spread to train regression models (such as LightGBM or Random Forest) for predicting high-probability spread expansions.")
+            st.info("💡 **ML Feature Pipeline Note:** Once these logged positions reach their contract expiry dates, compare the projected `Net XIRR (%)` against actual realized convergence spread to train regression models (such as LightGBM or Random Forest) for predicting high-probability spread expansions.")
         else:
             st.info("No historical prediction snapshots saved yet. Click the button above to record current top 3 picks.")
 
