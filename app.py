@@ -8,7 +8,7 @@ from datetime import datetime
 st.set_page_config(page_title="Live Nifty Arbitrage Terminal", layout="wide")
 
 st.title("Live Nifty Cash-Futures Multi-Expiry Arbitrage Terminal")
-st.markdown("Scans live intraday F&O universe, sorts by Net XIRR, tracks execution logs, and automatically records changes to CSV for predictive modeling.")
+st.markdown("Scans live intraday F&O universe, sorts by Net XIRR, executes paper trades for top 3, manages logs, and tracks performance.")
 
 # --- SIDEBAR CONTROLS ---
 st.sidebar.header("Terminal Controls")
@@ -47,19 +47,16 @@ def log_state_to_csv(df_best):
         "Net XIRR (%)": top_pick["Net XIRR (%)"]
     }
     
-    # Check if file exists and compare last state to avoid redundant logs
     if os.path.exists(log_file):
         try:
             df_log = pd.read_csv(log_file)
             if not df_log.empty:
                 last_row = df_log.iloc[-1]
-                # Discard if contract name is identical and XIRR shift is minimal (< 0.05%)
                 if last_row["Contract"] == current_state["Contract"] and abs(last_row["Net XIRR (%)"] - current_state["Net XIRR (%)"]) < 0.05:
                     return 
         except Exception:
             pass
                 
-    # Append and save new state automatically
     new_df = pd.DataFrame([current_state])
     new_df.to_csv(log_file, mode='a', header=not os.path.exists(log_file), index=False)
 
@@ -121,7 +118,6 @@ def fetch_live_intraday_arbitrage(tickers):
                 net_return_pct = (net_profit / total_capital_required) * 100
                 net_xirr = net_return_pct * (365 / days) if days > 0 else 0.0
                 
-                # Quantitative & Predictive Metrics
                 implied_repo_rate = round((((futures_price / spot_price) ** (365 / days)) - 1) * 100, 2)
                 downside_risk_score = round(intraday_vol * np.sqrt(days), 2)
                 model_confidence = round(max(40.0, min(95.0, 100 - (downside_risk_score * 2) + (net_xirr * 2))), 1)
@@ -153,7 +149,6 @@ def fetch_live_intraday_arbitrage(tickers):
     df_b = pd.DataFrame(best_stocks)
     if not df_b.empty:
         df_b = df_b.sort_values(by="Net XIRR (%)", ascending=False).reset_index(drop=True)
-        # Automatically invoke background CSV logging with change detection
         try:
             log_state_to_csv(df_b)
         except Exception:
@@ -166,7 +161,7 @@ df_best, df_all = fetch_live_intraday_arbitrage(universe_tickers)
 if df_best.empty:
     st.warning("Market feeds currently syncing or market closed. Click 'Force Live Refresh' to retry.")
 else:
-    tab1, tab2, tab3 = st.tabs(["Market Arbitrage Scanner & Rankings", "Deep-Dive Expiry Comparison", "Model Training & Prediction Log"])
+    tab1, tab2, tab3 = st.tabs(["Market Arbitrage Scanner & Rankings", "Deep-Dive Expiry Comparison", "Model Training & Paper Trade Log"])
     
     with tab1:
         st.subheader("Live Intraday Best Contract Scan Results per Stock (Sorted by Net XIRR)")
@@ -196,23 +191,50 @@ else:
         st.dataframe(df_stock_expiries, use_container_width=True)
 
     with tab3:
-        st.subheader("Predictive Model Backtesting & Logging Engine")
-        st.markdown("Log current top picks to historical storage to evaluate prediction accuracy over subsequent expiry cycles.")
+        st.subheader("Paper Trading & Model Logging Engine")
         
-        if st.button("📥 Snapshot & Log Top 3 Picks for Future ML Validation"):
-            log_snapshot = df_best.head(3)[["Ticker", "Contract Name", "Net Return (%)", "Net XIRR (%)", "Model Confidence (%)"]].copy()
-            log_snapshot["Timestamp"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        # --- PAPER TRADE TOP 3 ---
+        st.markdown("### 🚀 Execute Paper Trade for Current Top 3 Opportunities")
+        if st.button("Trigger Paper Trade for Top 3"):
+            paper_file = "paper_trades.csv"
+            top_3_trades = df_best.head(3)[["Ticker", "Contract Name", "Total Capital Required (₹)", "Net Return (%)", "Net XIRR (%)"]].copy()
+            top_3_trades["Entry Timestamp"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            top_3_trades["Status"] = "ACTIVE"
             
-            if "historical_logs" not in st.session_state:
-                st.session_state.historical_logs = pd.DataFrame()
-            st.session_state.historical_logs = pd.concat([st.session_state.historical_logs, log_snapshot], ignore_index=True)
-            st.success("Top 3 recommendations successfully snapshotted for future convergence and return verification!")
-            
-        if "historical_logs" in st.session_state and not st.session_state.historical_logs.empty:
-            st.markdown("**Historical Logged Predictions Database:**")
-            st.dataframe(st.session_state.historical_logs, use_container_width=True)
-            st.info("💡 **ML Feature Pipeline Note:** Once these logged positions reach their contract expiry dates, compare the projected `Net XIRR (%)` against actual realized convergence spread to train regression models (such as LightGBM or Random Forest) for predicting high-probability spread expansions.")
+            top_3_trades.to_csv(paper_file, mode='a', header=not os.path.exists(paper_file), index=False)
+            st.success("Paper trades successfully executed and logged for the top 3 opportunities!")
+
+        if os.path.exists("paper_trades.csv"):
+            st.markdown("**Active Paper Trading Portfolio:**")
+            df_paper = pd.read_csv("paper_trades.csv")
+            st.dataframe(df_paper, use_container_width=True)
+
+        st.markdown("---")
+        st.subheader("Manage & Clean Logged Data (`arbitrage_log.csv`)")
+        
+        log_file = "arbitrage_log.csv"
+        if os.path.exists(log_file):
+            df_log = pd.read_csv(log_file)
+            if not df_log.empty:
+                st.markdown("**Current Stored Log Entries:**")
+                st.dataframe(df_log, use_container_width=True)
+                
+                # Multi-select options to delete specific rows based on Timestamp & Contract
+                df_log["Identifier"] = df_log["Timestamp"] + " | " + df_log["Ticker"] + " | " + df_log["Contract"]
+                rows_to_delete = st.multiselect("Select log entries to delete:", options=df_log["Identifier"].tolist())
+                
+                if st.button("🗑️ Delete Selected Rows from Log"):
+                    if rows_to_delete:
+                        df_log = df_log[~df_log["Identifier"].isin(rows_to_delete)]
+                        df_log = df_log.drop(columns=["Identifier"])
+                        df_log.to_csv(log_file, index=False)
+                        st.success("Selected rows successfully deleted from CSV log.")
+                        st.rerun()
+                    else:
+                        st.warning("Please select at least one entry to delete.")
+            else:
+                st.info("Log file is currently empty.")
         else:
-            st.info("No historical prediction snapshots saved yet. Click the button above to record current top 3 picks.")
+            st.info("No arbitrage log file found yet.")
 
     st.caption(f"Last live intraday synchronization: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} IST | Auto-refresh active every 5 minutes.")
