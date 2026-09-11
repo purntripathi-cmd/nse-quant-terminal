@@ -1,2 +1,3 @@
-Timestamp,Ticker,Contract,Net XIRR (%)
-2026-09-10 04:49:33,ADANIENT,ADANIENT 26NOV2026,6.28
+Timestamp (IST),Ticker,Contract,Net XIRR (%),Trigger Source
+2026-09-10 04:49:33,ADANIENT,ADANIENT 26NOV2026,6.28,Manual (UI / Refresh)
+2026-09-11 13:15:45 IST,TATASTEEL,TATASTEEL 26NOV2026,6.26,Automated (GitHub Actions)
