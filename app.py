@@ -2,14 +2,42 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
 import os
-from datetime import datetime
+import calendar
+from datetime import datetime, date, timedelta
 import pytz
 
-st.set_page_config(page_title="Live Nifty Arbitrage Terminal", layout="wide")
+st.set_page_config(page_title="Live Nifty Arbitrage Terminal", layout="wide", page_icon="⚡")
 
-st.title("Live Nifty Cash-Futures Multi-Expiry Arbitrage Terminal")
-st.markdown("Scans live intraday F&O universe, tracks trade logs with trigger source indicators, and provides performance KPIs.")
+st.markdown("""
+<style>
+    .block-container {
+        padding-top: 0.8rem !important;
+        padding-bottom: 1.5rem !important;
+        padding-left: 1.2rem !important;
+        padding-right: 1.2rem !important;
+    }
+    div[data-testid="stMetric"] {
+        background-color: rgba(128, 128, 128, 0.05);
+        padding: 5px 12px !important;
+        border-radius: 6px;
+        border: 1px solid rgba(128, 128, 128, 0.15);
+    }
+    div[data-testid="stMetricLabel"] > p {
+        font-size: 0.72rem !important;
+        margin-bottom: 0px !important;
+    }
+    div[data-testid="stMetricValue"] > div {
+        font-size: 1.15rem !important;
+        font-weight: 700 !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+st.title("⚡ Live Nifty Cash-Futures Multi-Expiry Arbitrage Terminal")
+st.caption("Quantitative cost-of-carry arbitrage scanner with dynamic NSE monthly expiries, statutory tax drag, and repo rate benchmarks.")
 
 # --- IST TIMEZONE HELPER ---
 def get_ist_time():
@@ -19,9 +47,33 @@ def get_ist_time():
 # --- TRIGGER SOURCE DETECTION ---
 IS_GITHUB_ACTIONS = os.environ.get('GITHUB_ACTIONS') == 'true'
 
-# --- PERSISTENT NAVIGATION STATE ---
-if "active_nav" not in st.session_state:
-    st.session_state.active_nav = "📊 Market Scanner & Rankings"
+# --- DYNAMIC NSE EXPIRY ENGINE (LAST THURSDAY OF MONTH) ---
+def get_last_thursday(year: int, month: int) -> date:
+    """Computes the exact last Thursday of a given month (standard NSE derivatives expiry)."""
+    last_day = calendar.monthrange(year, month)[1]
+    d = date(year, month, last_day)
+    offset = (d.weekday() - 3) % 7
+    return d - timedelta(days=offset)
+
+def generate_dynamic_nse_expiries():
+    """Generates the active Near, Mid, and Far month NSE expiry dates dynamically."""
+    today = date.today()
+    expiries = []
+    y, m = today.year, today.month
+    for _ in range(5):
+        lt = get_last_thursday(y, m)
+        if lt >= today:
+            days_left = max(1, (lt - today).days)
+            expiries.append({
+                "date": lt,
+                "label": lt.strftime("%d%b%Y").upper(),
+                "days": days_left
+            })
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+    return expiries[:3]
 
 # --- SIDEBAR CONTROLS & STATUS INDICATOR ---
 st.sidebar.header("Terminal Controls")
@@ -36,7 +88,7 @@ if IS_GITHUB_ACTIONS:
 else:
     st.sidebar.success("💻 Running via **Manual UI / Local** Trigger")
 
-# Comprehensive Nifty F&O Universe Tickers
+# Comprehensive Nifty F&O Universe Tickers & Revised Lot Sizes
 universe_tickers = [
     "RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS", 
     "SBIN.NS", "BHARTIARTL.NS", "ITC.NS", "AXISBANK.NS", "KOTAKBANK.NS",
@@ -47,13 +99,13 @@ universe_tickers = [
 
 lot_sizes = {
     "RELIANCE": 250, "TCS": 175, "INFY": 400, "HDFCBANK": 550, "ICICIBANK": 700,
-    "SBIN": 750, "BHARTIARTL": 500, "ITC": 1600, "AXISBANK": 625, "KOTAKBANK": 400,
+    "SBIN": 750, "BHARTIARTL": 475, "ITC": 1600, "AXISBANK": 625, "KOTAKBANK": 400,
     "LT": 150, "HINDUNILVR": 300, "BAJFINANCE": 125, "MARUTI": 50, "SUNPHARMA": 350,
     "TITAN": 175, "TATAMOTORS": 700, "TATASTEEL": 5500, "NTPC": 1500, "POWERGRID": 2700,
     "ASIANPAINT": 300, "M&M": 350, "HCLTECH": 350, "WIPRO": 1500, "ADANIENT": 250
 }
 
-# --- AUTOMATED CSV DEDUPLICATED LOGGER WITH TRIGGER SOURCE ---
+# --- AUTOMATED CSV DEDUPLICATED LOGGER ---
 def log_state_to_csv(df_best):
     log_file = "arbitrage_log.csv"
     if df_best.empty:
@@ -92,11 +144,12 @@ def log_state_to_csv(df_best):
     df_log = df_log.drop_duplicates(subset=["Ticker", "Contract"], keep="last")
     df_log.to_csv(log_file, index=False)
 
-# --- LIVE INTRADAY YFINANCE & ADVANCED ANALYTICS ENGINE ---
+# --- LIVE INTRADAY DATA & QUANT ARBITRAGE ENGINE ---
 @st.cache_data(ttl=60)
 def fetch_live_intraday_arbitrage(tickers):
     best_stocks = []
     all_contracts = []
+    active_expiries = generate_dynamic_nse_expiries()
     
     for sym in tickers:
         try:
@@ -110,39 +163,41 @@ def fetch_live_intraday_arbitrage(tickers):
             ticker_clean = sym.replace(".NS", "")
             lot_size = lot_sizes.get(ticker_clean, 500)
             
-            expiries = [
-                {"name": f"{ticker_clean} 24SEP2026", "days": 14},
-                {"name": f"{ticker_clean} 29OCT2026", "days": 45},
-                {"name": f"{ticker_clean} 26NOV2026", "days": 75}
-            ]
-            
             stock_contracts = []
-            for i, exp in enumerate(expiries):
+            for i, exp in enumerate(active_expiries):
                 days = exp["days"]
-                risk_free_rate = 0.07
-                cost_of_carry_factor = (risk_free_rate * (days / 365.0))
+                risk_free_rate = 0.068  # 10Y Indian Sovereign benchmark ~6.80%
+                t_years = days / 365.0
                 
                 intraday_vol = float(df['Close'].pct_change().std() * 100) if len(df) > 1 else 0.1
-                basis_spread_pct = (cost_of_carry_factor * 100) + (0.05 * (i + 1)) + (intraday_vol * 0.1)
+                
+                # Quantitative Cost-of-Carry Basis calculation: F = S * e^(r*t)
+                # Basis spread factor with realistic market liquidity buffer
+                coc_annualized = risk_free_rate + (0.008 * (i + 1))
+                basis_spread_pct = (coc_annualized * t_years * 100) + (intraday_vol * 0.05)
                 
                 futures_price = spot_price * (1 + (basis_spread_pct / 100.0))
                 spread_inr = futures_price - spot_price
                 
                 spot_investment = spot_price * lot_size
-                future_margin = futures_price * lot_size * 0.20
+                future_margin = futures_price * lot_size * 0.20  # SPAN + Exposure margin approx 20%
                 total_capital_required = int(round(spot_investment + future_margin))
                 
-                turnover = spot_investment + (futures_price * lot_size)
-                brokerage = 40.0
-                stt = turnover * 0.0001 if basis_spread_pct > 0 else turnover * 0.002
-                exchange_charges = turnover * 0.000035
-                sebi = turnover * 0.000001
-                stamp_duty = spot_investment * 0.00015
+                # Statutory Transaction Taxes & Friction (SEBI / Union Budget 2024-2026 Compliant)
+                turnover_spot = spot_investment
+                turnover_fut = futures_price * lot_size
+                brokerage = 40.0  # ₹20 entry + ₹20 exit
+                stt_cash = turnover_spot * 0.001  # 0.1% delivery STT on buy
+                stt_fut = turnover_fut * 0.0002   # 0.02% STT on sale of futures
+                stt = stt_cash + stt_fut
+                exchange_charges = (turnover_spot + turnover_fut) * 0.0000297
+                sebi = (turnover_spot + turnover_fut) * 0.000001
+                stamp_duty = turnover_spot * 0.00015
                 gst = (brokerage + exchange_charges + sebi) * 0.18
                 total_charges = brokerage + stt + exchange_charges + sebi + stamp_duty + gst
                 
                 charge_drag_pct = round((total_charges / total_capital_required) * 100, 2)
-                charges_summary = f"Brokerage(₹40)+STT({stt/turnover*100:.2f}%)+Exchange+Stamp+GST ({charge_drag_pct}%)"
+                charges_summary = f"Brokerage(₹40)+STT(₹{stt:.0f})+Exch+Stamp+GST ({charge_drag_pct}%)"
                 
                 gross_profit = lot_size * spread_inr
                 net_profit = gross_profit - total_charges
@@ -151,11 +206,13 @@ def fetch_live_intraday_arbitrage(tickers):
                 
                 implied_repo_rate = round((((futures_price / spot_price) ** (365 / days)) - 1) * 100, 2)
                 downside_risk_score = round(intraday_vol * np.sqrt(days), 2)
-                model_confidence = round(max(40.0, min(95.0, 100 - (downside_risk_score * 2) + (net_xirr * 2))), 1)
+                model_confidence = round(max(50.0, min(98.0, 100 - (downside_risk_score * 2) + (net_xirr * 1.5))), 1)
                 
                 contract_data = {
                     "Ticker": ticker_clean,
-                    "Contract Name": exp["name"],
+                    "Contract Name": f"{ticker_clean} {exp['label']}",
+                    "Expiry Date": exp["date"].strftime("%Y-%m-%d"),
+                    "Days Left": days,
                     "Lot Size": lot_size,
                     "Total Capital Required (₹)": total_capital_required,
                     "Spot Price (₹)": round(spot_price, 2),
@@ -197,11 +254,23 @@ if IS_GITHUB_ACTIONS:
 if df_best.empty:
     st.warning("Market feeds currently syncing or market closed. Click 'Force Live Refresh' in sidebar to retry.")
 else:
-    # --- USER-FRIENDLY PERSISTENT NAVIGATION BAR ---
-    st.markdown("### Terminal Navigation")
+    # Summary Metrics Header
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric("Scanned Stocks", f"{len(df_best)} Tickers")
+    top_contract = df_best.iloc[0]
+    k2.metric("Peak Annualized XIRR", f"{top_contract['Net XIRR (%)']:.2f}%", delta=top_contract["Contract Name"])
+    avg_xirr = df_best["Net XIRR (%)"].mean()
+    k3.metric("Average Net XIRR", f"{avg_xirr:.2f}%")
+    k4.metric("RBI Repo Rate (Hurdle)", "6.50%", delta=f"{avg_xirr - 6.50:+.2f}% Spread")
+    k5.metric("Active Expiry Cycles", f"{len(generate_dynamic_nse_expiries())} Cycles")
+
+    st.markdown("---")
+
+    # Persistent Navigation Bar
     nav_options = [
         "📊 Market Scanner & Rankings", 
         "🔍 Multi-Expiry Deep-Dive", 
+        "📈 Arbitrage Curve & Visuals",
         "📥 Model Training & Paper Trades"
     ]
     
@@ -241,10 +310,40 @@ else:
         st.markdown(f"**Available Futures Contracts for {selected_stock} (Sorted by Net XIRR):**")
         st.dataframe(df_stock_expiries, use_container_width=True)
 
+    elif selected_tab == "📈 Arbitrage Curve & Visuals":
+        st.subheader("Arbitrage Yield Curve & Capital Efficiency")
+        c_p1, c_p2 = st.columns(2)
+
+        with c_p1:
+            fig_bar = px.bar(
+                df_best.head(12),
+                x="Ticker",
+                y="Net XIRR (%)",
+                color="Net XIRR (%)",
+                color_continuous_scale="Viridis",
+                title="Top 12 Stocks by Net Annualized XIRR (%)"
+            )
+            fig_bar.add_hline(y=6.50, line_dash="dash", line_color="orange", annotation_text="RBI Repo Rate (6.50%)")
+            fig_bar.update_layout(height=400, margin=dict(l=10, r=10, t=35, b=10))
+            st.plotly_chart(fig_bar, use_container_width=True)
+
+        with c_p2:
+            fig_scatter = px.scatter(
+                df_all,
+                x="Total Capital Required (₹)",
+                y="Net XIRR (%)",
+                color="Ticker",
+                size="Model Confidence (%)",
+                hover_name="Contract Name",
+                title="Capital Required vs Net XIRR across Expiries"
+            )
+            fig_scatter.update_layout(height=400, margin=dict(l=10, r=10, t=35, b=10))
+            st.plotly_chart(fig_scatter, use_container_width=True)
+
     elif selected_tab == "📥 Model Training & Paper Trades":
         st.subheader("Paper Trading & Model Logging Engine")
         
-        # --- PAPER TRADE TOP 3 (DEDUPLICATED LOGGING) ---
+        # --- PAPER TRADE TOP 3 ---
         st.markdown("### 🚀 Execute Paper Trade for Current Top 3 Opportunities")
         if st.button("Trigger Paper Trade for Top 3"):
             paper_file = "paper_trades.csv"
@@ -343,11 +442,9 @@ else:
         if os.path.exists(log_file):
             df_log = pd.read_csv(log_file)
             if not df_log.empty:
-                # --- PERFORMANCE KPIS ---
                 st.markdown("### 📈 Log Performance KPIs")
                 total_logs = len(df_log)
                 auto_logs = len(df_log[df_log["Trigger Source"].str.contains("Automated", na=False)]) if "Trigger Source" in df_log.columns else 0
-                manual_logs_count = total_logs - auto_logs
                 avg_xirr = df_log["Net XIRR (%)"].mean() if "Net XIRR (%)" in df_log.columns else 0.0
                 max_xirr = df_log["Net XIRR (%)"].max() if "Net XIRR (%)" in df_log.columns else 0.0
                 
@@ -373,7 +470,6 @@ else:
                 time_col = "Timestamp (IST)" if "Timestamp (IST)" in df_log.columns else df_log.columns[0]
                 trigger_col = "Trigger Source" if "Trigger Source" in df_log.columns else df_log.columns[1]
                 ticker_col = "Ticker" if "Ticker" in df_log.columns else df_log.columns[2]
-                contract_col = "Contract" if "Contract" in df_log.columns else df_log.columns[3]
                 
                 selected_indices = st.multiselect(
                     "Select row IDs to delete from log:", 
@@ -405,4 +501,4 @@ else:
         else:
             st.info("No arbitrage log file found yet.")
 
-    st.caption(f"Last live intraday synchronization: {get_ist_time()} | Auto-refresh active every 5 minutes.")
+    st.caption(f"Last live intraday synchronization: {get_ist_time()} | Dynamic NSE Monthly Expiries Active.")
