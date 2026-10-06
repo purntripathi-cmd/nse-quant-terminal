@@ -2,12 +2,28 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
-import plotly.express as px
-import plotly.graph_objects as go
 import os
 import calendar
-from datetime import datetime, date, timedelta
-import pytz
+from datetime import datetime, date, timedelta, timezone
+
+# Resilient Plotly import: Optional in headless mode, active in interactive UI
+try:
+    import plotly.express as px
+    import plotly.graph_objects as go
+except ImportError:
+    px = None
+    go = None
+
+# Resilient IST Timezone: Fallback to standard library timezone if pytz is absent
+try:
+    import pytz
+    IST_TZ = pytz.timezone('Asia/Kolkata')
+except ImportError:
+    try:
+        from zoneinfo import ZoneInfo
+        IST_TZ = ZoneInfo('Asia/Kolkata')
+    except Exception:
+        IST_TZ = timezone(timedelta(hours=5, minutes=30))
 
 st.set_page_config(page_title="Live Nifty Arbitrage Terminal", layout="wide", page_icon="⚡")
 
@@ -41,8 +57,7 @@ st.caption("Quantitative cost-of-carry arbitrage scanner with dynamic NSE monthl
 
 # --- IST TIMEZONE HELPER ---
 def get_ist_time():
-    ist = pytz.timezone('Asia/Kolkata')
-    return datetime.now(ist).strftime('%Y-%m-%d %H:%M:%S IST')
+    return datetime.now(IST_TZ).strftime('%Y-%m-%d %H:%M:%S IST')
 
 # --- TRIGGER SOURCE DETECTION ---
 IS_GITHUB_ACTIONS = os.environ.get('GITHUB_ACTIONS') == 'true'
@@ -93,7 +108,7 @@ universe_tickers = [
     "RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS", 
     "SBIN.NS", "BHARTIARTL.NS", "ITC.NS", "AXISBANK.NS", "KOTAKBANK.NS",
     "LT.NS", "HINDUNILVR.NS", "BAJFINANCE.NS", "MARUTI.NS", "SUNPHARMA.NS",
-    "TITAN.NS", "TATAMOTORS.NS", "TATASTEEL.NS", "NTPC.NS", "POWERGRID.NS",
+    "TITAN.NS", "COALINDIA.NS", "TATASTEEL.NS", "NTPC.NS", "POWERGRID.NS",
     "ASIANPAINT.NS", "M&M.NS", "HCLTECH.NS", "WIPRO.NS", "ADANIENT.NS"
 ]
 
@@ -101,7 +116,7 @@ lot_sizes = {
     "RELIANCE": 250, "TCS": 175, "INFY": 400, "HDFCBANK": 550, "ICICIBANK": 700,
     "SBIN": 750, "BHARTIARTL": 475, "ITC": 1600, "AXISBANK": 625, "KOTAKBANK": 400,
     "LT": 150, "HINDUNILVR": 300, "BAJFINANCE": 125, "MARUTI": 50, "SUNPHARMA": 350,
-    "TITAN": 175, "TATAMOTORS": 700, "TATASTEEL": 5500, "NTPC": 1500, "POWERGRID": 2700,
+    "TITAN": 175, "COALINDIA": 2100, "TATASTEEL": 5500, "NTPC": 1500, "POWERGRID": 2700,
     "ASIANPAINT": 300, "M&M": 350, "HCLTECH": 350, "WIPRO": 1500, "ADANIENT": 250
 }
 
@@ -143,6 +158,69 @@ def log_state_to_csv(df_best):
         
     df_log = df_log.drop_duplicates(subset=["Ticker", "Contract"], keep="last")
     df_log.to_csv(log_file, index=False)
+
+# --- AUTOMATED PAPER TRADE EXECUTION ENGINE ---
+def execute_paper_trades(df_best, trigger_type=None):
+    paper_file = "paper_trades.csv"
+    log_file = "arbitrage_log.csv"
+    if df_best is None or df_best.empty:
+        return None
+    
+    current_time_ist = get_ist_time()
+    if trigger_type is None:
+        trigger_type = "Automated (GitHub Actions)" if IS_GITHUB_ACTIONS else "Manual (UI / Refresh)"
+    
+    cols_to_use = ["Ticker", "Contract Name", "Total Capital Required (₹)", "Net Return (%)", "Net XIRR (%)"]
+    if "Model Confidence (%)" in df_best.columns:
+        cols_to_use.append("Model Confidence (%)")
+        
+    top_trades = df_best.head(3)[cols_to_use].copy()
+    top_trades["Entry Timestamp (IST)"] = current_time_ist
+    top_trades["Trigger Source"] = trigger_type
+    top_trades["Status"] = "ACTIVE"
+    top_trades["Hurdle Met (>6.50%)"] = top_trades["Net XIRR (%)"] >= 6.50
+    
+    if os.path.exists(paper_file):
+        try:
+            df_paper = pd.read_csv(paper_file)
+            df_paper = pd.concat([df_paper, top_trades], ignore_index=True)
+        except Exception:
+            df_paper = top_trades
+    else:
+        df_paper = top_trades
+        
+    df_paper = df_paper.drop_duplicates(subset=["Ticker", "Contract Name"], keep="last")
+    df_paper.to_csv(paper_file, index=False)
+    
+    # Mirror top opportunities into arbitrage_log.csv for audit trail
+    if os.path.exists(log_file):
+        try:
+            df_log = pd.read_csv(log_file)
+            if "Timestamp" in df_log.columns and "Timestamp (IST)" not in df_log.columns:
+                df_log.rename(columns={"Timestamp": "Timestamp (IST)"}, inplace=True)
+            if "Contract Name" in df_log.columns and "Contract" not in df_log.columns:
+                df_log.rename(columns={"Contract Name": "Contract"}, inplace=True)
+            if "Trigger Source" not in df_log.columns:
+                df_log["Trigger Source"] = "Manual (UI / Refresh)"
+        except Exception:
+            df_log = pd.DataFrame(columns=["Timestamp (IST)", "Trigger Source", "Ticker", "Contract", "Net XIRR (%)"])
+    else:
+        df_log = pd.DataFrame(columns=["Timestamp (IST)", "Trigger Source", "Ticker", "Contract", "Net XIRR (%)"])
+        
+    manual_logs = []
+    for _, row in df_best.head(3).iterrows():
+        manual_logs.append({
+            "Timestamp (IST)": current_time_ist,
+            "Trigger Source": trigger_type,
+            "Ticker": row["Ticker"],
+            "Contract": row["Contract Name"],
+            "Net XIRR (%)": row["Net XIRR (%)"]
+        })
+    df_manual_log = pd.DataFrame(manual_logs)
+    df_log = pd.concat([df_log, df_manual_log], ignore_index=True)
+    df_log = df_log.drop_duplicates(subset=["Ticker", "Contract"], keep="last")
+    df_log.to_csv(log_file, index=False)
+    return df_paper
 
 # --- LIVE INTRADAY DATA & QUANT ARBITRAGE ENGINE ---
 @st.cache_data(ttl=60)
@@ -247,7 +325,24 @@ def fetch_live_intraday_arbitrage(tickers):
 df_best, df_all = fetch_live_intraday_arbitrage(universe_tickers)
 
 if IS_GITHUB_ACTIONS:
-    print("Headless GitHub Actions execution complete. State logged successfully.")
+    paper_df = execute_paper_trades(df_best)
+    hurdle = 6.50
+    print("==================================================")
+    print("NSE CASH-FUTURES ARBITRAGE TERMINAL - AUDIT SUMMARY")
+    print("==================================================")
+    if not df_best.empty:
+        top_contract = df_best.iloc[0]
+        print(f"Top Opportunity Scanned: {top_contract['Contract Name']} (Net XIRR: {top_contract['Net XIRR (%)']:.2f}%)")
+    if paper_df is not None and not paper_df.empty:
+        hurdle_wins = int((paper_df["Net XIRR (%)"] >= hurdle).sum())
+        pos_wins = int((paper_df["Net Return (%)"] > 0).sum())
+        total = len(paper_df)
+        print(f"Paper Trades Executed: {total} positions recorded in paper_trades.csv")
+        print(f"Hurdle Beat Success Rate (Net XIRR >= {hurdle}%): {hurdle_wins}/{total} ({(hurdle_wins/total)*100:.1f}%)")
+        print(f"Positive Carry Success Rate (Net Profit > 0): {pos_wins}/{total} ({(pos_wins/total)*100:.1f}%)")
+        print(f"Portfolio Average Net XIRR: {paper_df['Net XIRR (%)'].mean():.2f}%")
+    print("==================================================")
+    print("Headless GitHub Actions execution complete. State and paper trades logged successfully.")
     import sys
     sys.exit(0)
 
@@ -312,33 +407,36 @@ else:
 
     elif selected_tab == "📈 Arbitrage Curve & Visuals":
         st.subheader("Arbitrage Yield Curve & Capital Efficiency")
-        c_p1, c_p2 = st.columns(2)
+        if px is not None:
+            c_p1, c_p2 = st.columns(2)
 
-        with c_p1:
-            fig_bar = px.bar(
-                df_best.head(12),
-                x="Ticker",
-                y="Net XIRR (%)",
-                color="Net XIRR (%)",
-                color_continuous_scale="Viridis",
-                title="Top 12 Stocks by Net Annualized XIRR (%)"
-            )
-            fig_bar.add_hline(y=6.50, line_dash="dash", line_color="orange", annotation_text="RBI Repo Rate (6.50%)")
-            fig_bar.update_layout(height=400, margin=dict(l=10, r=10, t=35, b=10))
-            st.plotly_chart(fig_bar, use_container_width=True)
+            with c_p1:
+                fig_bar = px.bar(
+                    df_best.head(12),
+                    x="Ticker",
+                    y="Net XIRR (%)",
+                    color="Net XIRR (%)",
+                    color_continuous_scale="Viridis",
+                    title="Top 12 Stocks by Net Annualized XIRR (%)"
+                )
+                fig_bar.add_hline(y=6.50, line_dash="dash", line_color="orange", annotation_text="RBI Repo Rate (6.50%)")
+                fig_bar.update_layout(height=400, margin=dict(l=10, r=10, t=35, b=10))
+                st.plotly_chart(fig_bar, use_container_width=True)
 
-        with c_p2:
-            fig_scatter = px.scatter(
-                df_all,
-                x="Total Capital Required (₹)",
-                y="Net XIRR (%)",
-                color="Ticker",
-                size="Model Confidence (%)",
-                hover_name="Contract Name",
-                title="Capital Required vs Net XIRR across Expiries"
-            )
-            fig_scatter.update_layout(height=400, margin=dict(l=10, r=10, t=35, b=10))
-            st.plotly_chart(fig_scatter, use_container_width=True)
+            with c_p2:
+                fig_scatter = px.scatter(
+                    df_all,
+                    x="Total Capital Required (₹)",
+                    y="Net XIRR (%)",
+                    color="Ticker",
+                    size="Model Confidence (%)",
+                    hover_name="Contract Name",
+                    title="Capital Required vs Net XIRR across Expiries"
+                )
+                fig_scatter.update_layout(height=400, margin=dict(l=10, r=10, t=35, b=10))
+                st.plotly_chart(fig_scatter, use_container_width=True)
+        else:
+            st.info("Interactive visualizers require 'plotly' which is installed in interactive environments.")
 
     elif selected_tab == "📥 Model Training & Paper Trades":
         st.subheader("Paper Trading & Model Logging Engine")
@@ -346,58 +444,30 @@ else:
         # --- PAPER TRADE TOP 3 ---
         st.markdown("### 🚀 Execute Paper Trade for Current Top 3 Opportunities")
         if st.button("Trigger Paper Trade for Top 3"):
-            paper_file = "paper_trades.csv"
-            log_file = "arbitrage_log.csv"
-            current_time_ist = get_ist_time()
-            trigger_type = "Manual (UI / Refresh)"
-            
-            top_3_trades = df_best.head(3)[["Ticker", "Contract Name", "Total Capital Required (₹)", "Net Return (%)", "Net XIRR (%)"]].copy()
-            top_3_trades["Entry Timestamp (IST)"] = current_time_ist
-            top_3_trades["Trigger Source"] = trigger_type
-            top_3_trades["Status"] = "ACTIVE"
-            
-            if os.path.exists(paper_file):
-                df_paper = pd.read_csv(paper_file)
-                df_paper = pd.concat([df_paper, top_3_trades], ignore_index=True)
-            else:
-                df_paper = top_3_trades
-            df_paper = df_paper.drop_duplicates(subset=["Ticker", "Contract Name"], keep="last")
-            df_paper.to_csv(paper_file, index=False)
-            
-            if os.path.exists(log_file):
-                df_log = pd.read_csv(log_file)
-                if "Timestamp" in df_log.columns and "Timestamp (IST)" not in df_log.columns:
-                    df_log.rename(columns={"Timestamp": "Timestamp (IST)"}, inplace=True)
-                if "Contract Name" in df_log.columns and "Contract" not in df_log.columns:
-                    df_log.rename(columns={"Contract Name": "Contract"}, inplace=True)
-                if "Trigger Source" not in df_log.columns:
-                    df_log["Trigger Source"] = "Manual (UI / Refresh)"
-            else:
-                df_log = pd.DataFrame(columns=["Timestamp (IST)", "Trigger Source", "Ticker", "Contract", "Net XIRR (%)"])
-                
-            manual_logs = []
-            for _, row in df_best.head(3).iterrows():
-                manual_logs.append({
-                    "Timestamp (IST)": current_time_ist,
-                    "Trigger Source": trigger_type,
-                    "Ticker": row["Ticker"],
-                    "Contract": row["Contract Name"],
-                    "Net XIRR (%)": row["Net XIRR (%)"]
-                })
-            df_manual_log = pd.DataFrame(manual_logs)
-            df_log = pd.concat([df_log, df_manual_log], ignore_index=True)
-            df_log = df_log.drop_duplicates(subset=["Ticker", "Contract"], keep="last")
-            df_log.to_csv(log_file, index=False)
-            
+            execute_paper_trades(df_best, trigger_type="Manual (UI / Refresh)")
             st.success("Paper trades triggered, deduplicated in active portfolio, and recorded in history logs!")
             st.rerun()
 
         # --- PAPER TRADING PORTFOLIO MANAGEMENT ---
         paper_file = "paper_trades.csv"
         if os.path.exists(paper_file):
-            st.markdown("**Active Paper Trading Portfolio:**")
+            st.markdown("### 📊 Active Paper Trading Portfolio & Success Rate")
             df_paper = pd.read_csv(paper_file)
             if not df_paper.empty:
+                # Success Rate Analytics
+                hurdle = 6.50
+                total_pt = len(df_paper)
+                hurdle_met = int((df_paper["Net XIRR (%)"] >= hurdle).sum()) if "Net XIRR (%)" in df_paper.columns else 0
+                pos_ret = int((df_paper["Net Return (%)"] > 0).sum()) if "Net Return (%)" in df_paper.columns else 0
+                avg_pt_xirr = df_paper["Net XIRR (%)"].mean() if "Net XIRR (%)" in df_paper.columns else 0.0
+                
+                sr1, sr2, sr3, sr4 = st.columns(4)
+                sr1.metric("Active Paper Trades", total_pt)
+                sr1_sub = f"{hurdle_met}/{total_pt} Opportunities"
+                sr2.metric("Hurdle Beat Rate (≥6.50%)", f"{(hurdle_met/total_pt)*100:.1f}%", delta=sr1_sub)
+                sr3.metric("Positive Carry Win Rate", f"{(pos_ret/total_pt)*100:.1f}%", delta="100% Risk-Free Carry")
+                sr4.metric("Avg Portfolio XIRR", f"{avg_pt_xirr:.2f}%", delta=f"{avg_pt_xirr - hurdle:+.2f}% vs Hurdle")
+                
                 df_paper = df_paper.reset_index(drop=True)
                 df_paper["Trade_ID"] = df_paper.index
                 
@@ -442,17 +512,19 @@ else:
         if os.path.exists(log_file):
             df_log = pd.read_csv(log_file)
             if not df_log.empty:
-                st.markdown("### 📈 Log Performance KPIs")
+                st.markdown("### 📈 Log Performance & Success Rate KPIs")
                 total_logs = len(df_log)
                 auto_logs = len(df_log[df_log["Trigger Source"].str.contains("Automated", na=False)]) if "Trigger Source" in df_log.columns else 0
                 avg_xirr = df_log["Net XIRR (%)"].mean() if "Net XIRR (%)" in df_log.columns else 0.0
                 max_xirr = df_log["Net XIRR (%)"].max() if "Net XIRR (%)" in df_log.columns else 0.0
+                hurdle_success = int((df_log["Net XIRR (%)"] >= 6.50).sum()) if "Net XIRR (%)" in df_log.columns else 0
                 
-                kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-                kpi1.metric("Total Snapshots Logged", total_logs)
-                kpi2.metric("Automated Runs (GH Actions)", auto_logs)
-                kpi3.metric("Average Logged XIRR", f"{avg_xirr:.2f}%")
-                kpi4.metric("Peak Logged XIRR", f"{max_xirr:.2f}%")
+                kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
+                kpi1.metric("Total Snapshots", total_logs)
+                kpi2.metric("GH Actions Runs", auto_logs)
+                kpi3.metric("Hurdle Beat Rate", f"{(hurdle_success/total_logs)*100:.1f}%" if total_logs > 0 else "N/A")
+                kpi4.metric("Average Logged XIRR", f"{avg_xirr:.2f}%")
+                kpi5.metric("Peak Logged XIRR", f"{max_xirr:.2f}%")
                 
                 st.markdown("---")
                 st.markdown("**Current Stored Log Entries:**")

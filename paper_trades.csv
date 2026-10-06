@@ -1,0 +1,4 @@
+Ticker,Contract Name,Total Capital Required (₹),Net Return (%),Net XIRR (%),Model Confidence (%),Entry Timestamp (IST),Trigger Source,Status,Hurdle Met (>6.50%)
+ICICIBANK,ICICIBANK 31DEC2026,1122929,1.68,7.13,98.0,2026-10-06 08:36:08 IST,Automated (GitHub Actions),ACTIVE,True
+AXISBANK,AXISBANK 31DEC2026,919968,1.68,7.13,98.0,2026-10-06 08:36:08 IST,Automated (GitHub Actions),ACTIVE,True
+BHARTIARTL,BHARTIARTL 31DEC2026,1018214,1.68,7.13,98.0,2026-10-06 08:36:08 IST,Automated (GitHub Actions),ACTIVE,True
