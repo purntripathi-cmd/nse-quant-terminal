@@ -1,6 +1,13 @@
 # NSE Quantitative Arbitrage & Cost-of-Carry Terminal ⚡
 
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://share.streamlit.io)
+<!-- LIVE_STREAMLIT_APP_BANNER_START -->
+[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://nse-quant-terminal.streamlit.app/)
+
+> **🚀 Live Streamlit App:** [**https://nse-quant-terminal.streamlit.app/**](https://nse-quant-terminal.streamlit.app/)
+<!-- LIVE_STREAMLIT_APP_BANNER_END -->
+
+
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://nse-quant-terminal.streamlit.app/)
 [![NSE Arbitrage Auto-Logger](https://github.com/purntripathi-cmd/nse-quant-terminal/actions/workflows/auto_logger.yml/badge.svg)](https://github.com/purntripathi-cmd/nse-quant-terminal/actions/workflows/auto_logger.yml)
 
 An institutional-grade Cash-and-Carry Arbitrage scanner and terminal for Indian equities (National Stock Exchange). The application scans the top liquid F&O underlying constituents in real-time, computes theoretical Cost-of-Carry fair values accounting for dividend yield drag and market beta dispersion, models full SEBI statutory transaction costs, and tracks paper-traded positions across automated CI/CD runs.
