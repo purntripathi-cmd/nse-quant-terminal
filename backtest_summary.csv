@@ -1,0 +1,6 @@
+Strategy ID,Strategy Name,Total Real Trades,Positive Carry Win Rate (%),Hurdle Beat Accuracy (>9.00%),Average Expected XIRR (%),Average Realized XIRR (%),Median Realized XIRR (%),Avg Profit per Trade (₹),Total Net Profit (₹),Min Trade XIRR (%)
+S1,S1: Naive Unfiltered 4-Leg Market Unwind (ClsPric Exit),60,88.3,33.3,8.86,9.1,6.28,4809.5,288569.98,-11.46
+S2,S2: Unfiltered 4-Leg Exchange Settlement (SttlmPric Convergence),60,100.0,31.7,8.86,9.67,5.52,5036.33,302179.73,1.42
+S3,"S3: Physical Delivery Netted (>9% XIRR Gate, SttlmPric)",9,100.0,100.0,13.14,14.65,15.14,8205.88,73852.96,9.48
+S4,S4: Institutional Alpha-Carry (>9% XIRR + Early Backwardation Unwind + Roll-Hold),12,100.0,100.0,13.52,28.64,16.63,8913.16,106957.91,9.21
+S5,"S5: Sniper Guaranteed-Profit (>9% XIRR, Max 2 Trades/Cycle, 4-Leg Profit Floor)",9,100.0,100.0,12.52,25.54,16.11,6763.11,60867.97,9.21

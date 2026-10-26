@@ -6,96 +6,76 @@
 > **🚀 Live Streamlit App:** [**https://nse-quant-terminal.streamlit.app/**](https://nse-quant-terminal.streamlit.app/)
 <!-- LIVE_STREAMLIT_APP_BANNER_END -->
 
-
 [![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://nse-quant-terminal.streamlit.app/)
-[![NSE Arbitrage Auto-Logger](https://github.com/purntripathi-cmd/nse-quant-terminal/actions/workflows/auto_logger.yml/badge.svg)](https://github.com/purntripathi-cmd/nse-quant-terminal/actions/workflows/auto_logger.yml)
+[![NSE 3PM IST Daily Arbitrage Paper Trader](https://github.com/purntripathi-cmd/nse-quant-terminal/actions/workflows/auto_logger.yml/badge.svg)](https://github.com/purntripathi-cmd/nse-quant-terminal/actions/workflows/auto_logger.yml)
 
-An institutional-grade Cash-and-Carry Arbitrage scanner and terminal for Indian equities (National Stock Exchange). The application scans the top liquid F&O underlying constituents in real-time, computes theoretical Cost-of-Carry fair values accounting for dividend yield drag and market beta dispersion, models full SEBI statutory transaction costs, and tracks paper-traded positions across automated CI/CD runs.
-
----
-
-## 🏛️ Core Quantitative Architecture
-
-### 1. Vectorized Batch Spot Ingestion
-Rather than issuing sequential, high-latency network queries across individual tickers, the engine employs multi-threaded vectorized batch downloads via `yfinance`. 
-* **Throughput:** Scans 20+ liquid NSE large-caps in **~3.5 seconds** (down from >40s sequential).
-* **Data Resiliency:** Ingests live 1-minute and 5-minute equity prints, computing intraday momentum, 20-period moving average deviations, and real-time liquidity depth.
-
-### 2. Quantitative Cost-of-Carry & Fair Pricing Model
-Under no-arbitrage equilibrium pricing, the theoretical futures price for an equity underlying is given by:
-$$F_{\text{fair}} = S_t \cdot \left(1 + (r - q) \cdot \frac{T - t}{365}\right) + \Delta_{\text{basis}}(\beta, \sigma) - \text{Slippage}$$
-
-Where:
-* $S_t$: Real-time cash spot price.
-* $r$: Risk-free benchmark rate (default 6.50% based on the RBI Repo Rate / 91-day T-Bill).
-* $q$: Ticker-specific trailing annualized dividend yield (e.g., ITC, COALINDIA, TCS dividend drag).
-* $\frac{T - t}{365}$: Precise day fraction to contract expiry.
-* $\Delta_{\text{basis}}(\beta, \sigma)$: Systematic volatility and high-beta dislocation spread.
-* $\text{Slippage}$: Impact cost penalized against Average Daily Turnover (ADT) and lot size.
-
-### 3. Dynamic NSE Holiday-Adjusted Expiry Calendar
-The engine dynamically computes monthly NSE F&O expiry dates (the last Thursday of the current and near month). It cross-references an integrated database of official NSE trading holidays (2024–2027) and automatically rolls expiry dates backward to the prior trading session whenever an expiry falls on an exchange holiday (e.g., Mahashivratri, Eid, Diwali, Christmas).
-
-### 4. Dual Capital Deployment Modes
-* **100% Cash-Funded (Covered Arbitrage):**
-  $$Total\ Capital = S_t \cdot LotSize + Margin_{F\&O}$$
-  Full cash outlay, offering zero margin-call risk with non-leveraged net XIRR.
-* **Pledged Margin / Collateral (Optimized Yield):**
-  Equity/ETF collateral (e.g., LiquidBeES, G-Secs) pledged with a standard 10% haircut, requiring only 20% liquid cash for exchange SPAN/exposure margins while idle collateral continues yielding ~6.50% interest.
-
-### 5. Indian Statutory Tax & Transaction Friction Engine
-Accurately models the complete post-Budget 2024/2026 statutory fee matrix:
-* **Securities Transaction Tax (STT):**
-  * Cash Delivery: 0.10% on entry and exit turnover.
-  * F&O Futures: 0.02% on sell turnover.
-* **Exchange Turnover Charges:** 0.00325% (NSE Cash) and 0.0019% (NSE Futures).
-* **SEBI Regulatory Charges:** ₹10 per crore (0.0001%).
-* **Stamp Duty:** 0.015% on cash buy; 0.002% on futures entry.
-* **Goods and Services Tax (GST):** 18% levied on brokerage and exchange charges.
+An institutional-grade **100% Live-Data Cash-and-Carry Arbitrage Scanner, Backtesting Suite, and Automated 3:00 PM IST Paper Trading Terminal** for Indian equities (National Stock Exchange of India).
 
 ---
 
-## 🛠️ Interactive Execution Tools
+## 🏛️ Core Quantitative & Live-Data Architecture
 
-* **Live Broker Quote Calculator:** Enter live bid/ask quotes from Zerodha Kite, Groww, AngelOne, or Shoonya to compute exact net spread, total cash required, post-tax cash profit, and annualized Net XIRR before routing live orders.
-* **Interactive F&O Lot-Size Override:** Adjust standard contract multipliers as NSE periodically revises derivative lot sizes.
-* **Automated Paper Portfolio:** Tracks simulated fills meeting target hurdle rates ($XIRR \ge 6.50\%$), storing entry timestamps, capital required, and live status with full deduplication.
+### 1. 100% Live NSE F&O Market Feed (Zero Synthetic / Formula Pricing)
+All artificial or formula-derived futures pricing and hardcoded stock dictionaries have been completely eliminated:
+* **Full 213-Stock F&O Universe (~635 Active Futures Contracts):** Dynamically ingests the complete NSE F&O stock futures universe (`Near`, `Next`, and `Far` monthly expiries) from official **NSE UDiFF F&O BhavCopy archives** (`nsearchives.nseindia.com`) paired with **Live Intraday NSE Equity Derivatives API streams** (`www.nseindia.com/api/liveEquity-derivatives?index=stock_fut`).
+* **Exchange-Published Contract Specs:** Reads exact exchange-mandated contract expiry dates (`XpryDt`), official lot sizes (`NewBrdLotQty`), underlying spot prices (`UndrlygPric`), futures close/last/settlement prices (`ClsPric`, `LastPric`, `SttlmPric`), traded volume in lots (`TtlTradgVol`), and Open Interest (`OpnIntrst`).
+
+### 2. Official NSE Last-Tuesday Expiry Calendar & Roll-Window Guard
+* **Last Tuesday Rule (NSE Circular Effective Sep 2025):** Accurately models NSE monthly F&O expiry on the **Last Tuesday** of each contract month (rolling back to the preceding trading day on NSE holidays, such as `23NOV2026` due to the `2026-11-24` Guru Nanak Jayanti holiday).
+* **Expiry Roll-Window Filter (`Days Left >= 5`) & Calendar Roll Spreads ($F_{\text{Next}} - F_{\text{Near}}$):** Prevents near-expiry annualization distortion by automatically transitioning top rankings to the liquid Next-Month contract when Near-Month has fewer than 5 days remaining, and computes live Calendar Roll Spreads.
+
+### 3. True-to-Label SEBI Statutory Charges & Execution Regimes
+Models exact SEBI / NSE True-to-Label statutory transaction costs (`backtest_engine.py`):
+* **S4: Institutional Alpha-Carry (`institutional_roll`):** Multi-cycle cash hold (amortized 0.10% cash delivery STT across 4 monthly cycles) + monthly futures rollover (0.02% futures sell STT, 0.002% futures stamp duty, 0.00173% NSE F&O exchange fee, SEBI + IPFT ₹15/cr, 18% GST, 2 bps execution slippage) + **Early Backwardation Unwind** whenever intraday/daily basis collapses to $\le 0$ before expiry.
+* **S3: Single-Cycle Physical Delivery Netted (`single_cycle_netted`):** Cash buy (0.10% STT + 0.015% stamp duty) + Futures short (0.02% STT) settled via physical delivery netting at official exchange expiry (`SttlmPric == UndrlygPric`).
+* **S2 / S1: Full 4-Leg Round-Trip Unwind (`full_4leg_unwind`):** Full 0.20% round-trip cash STT + 0.02% futures STT + 4-leg brokerage/exchange/slippage friction.
 
 ---
 
-## 🤖 Headless CI/CD & Automated Logging
+## 🧪 Real-Data Historical Backtest Results (May 2026 – October 2026)
 
-The terminal includes headless execution support triggered automatically via `.github/workflows/auto_logger.yml`:
-* **Cron Frequency:** Runs every 15 minutes during active NSE market hours (Mon–Fri, 09:00–15:30 IST).
-* **Audit Summaries:** Extracts top arbitrage opportunities and appends state snapshots to `arbitrage_log.csv` and executable paper trades to `paper_trades.csv`.
-* **Zero UI Overhead:** Bypasses browser/Streamlit overhead during headless CI execution to complete logging jobs in under 5 seconds.
+Using `backtest_engine.py`, we backtested 5 candidate arbitrage strategies across **6 complete 2026 NSE monthly F&O expiry cycles** (`21,896` authentic NSE F&O UDiFF BhavCopy contract records across 34 trading checkpoints) with a strict **`> 9.00%` Net XIRR gate** and **Guaranteed 4-Leg Profit Floor (`>= ₹1,500`)**:
+
+| Strategy ID | Strategy Name | Real Trades | Positive Carry Win Rate (%) | `> 9.00%` XIRR Beat Accuracy | Avg Expected XIRR (%) | Avg Realized Net XIRR (%) | Avg Profit / Trade (₹) | Total Net Profit (₹) | Min Trade XIRR (%) |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **S1** | Naive Unfiltered 4-Leg Market Unwind (`ClsPric` Exit) | 60 | `88.3%` | `33.3%` | `8.86%` | `9.10%` | `₹4,809.50` | `₹2,88,569.98` | `-11.46%` |
+| **S2** | Unfiltered 4-Leg Exchange Settlement (`SttlmPric` Convergence) | 60 | **`100.0%`** | `31.7%` | `8.86%` | `9.67%` | `₹5,036.33` | `₹3,02,179.73` | `1.42%` |
+| **S3** | Physical Delivery Netted (`>9%` XIRR Gate, `SttlmPric`) | 9 | **`100.0%`** | **`100.0%`** | `13.14%` | **`14.65%`** | `₹8,205.88` | `₹73,852.96` | **`9.48%`** |
+| **S4** | **Institutional Alpha-Carry (`>9%` XIRR + Early Backwardation Unwind + Roll-Hold)** | **12** | **`100.0%`** | **`100.0%`** | **`13.52%`** | **`28.64%`** | **`₹8,913.16`** | **`₹1,06,957.91`** | **`9.21%`** |
+| **S5** | **Sniper Guaranteed-Profit (`>9%` XIRR, Max 2 Trades/Cycle, 4-Leg Profit Floor)** | **9** | **`100.0%`** | **`100.0%`** | **`12.52%`** | **`25.54%`** | **`₹6,763.11`** | **`₹60,867.97`** | **`9.21%`** |
 
 ---
 
-## 🚀 Local Installation & Setup
+## 🕒 Daily 3:00 PM IST Weekday Scheduled Paper Trading & MTM Validation
 
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/purntripathi-cmd/nse-quant-terminal.git
-   cd nse-quant-terminal
-   ```
+To continuously validate live strategy accuracy during active NSE market hours:
+* **Automated Schedule:** `.github/workflows/auto_logger.yml` runs every weekday (Monday–Friday) at **3:00 PM IST (`cron: '30 9 * * 1-5'` UTC)** — 30 minutes before the 3:30 PM NSE market close, when institutional cash-futures basis and roll liquidity peak.
+* **Real-Time Mark-to-Market (MTM) & Convergence Settlement:**
+  * Marks all `ACTIVE` positions in `paper_trades.csv` against live NSE Spot and Futures prices.
+  * Automatically closes positions early (`CLOSED - Early Backwardation Unwind`) if live futures trade at or below spot (`Future <= Spot`), locking in accelerated annualized XIRR.
+  * Automatically settles positions on expiry (`SETTLED - Expiry Convergence`) at `SttlmPric == UndrlygPric`.
+  * Enters top qualifying `S4` hurdle-beating contracts and commits both `paper_trades.csv` and `arbitrage_log.csv` to the repository.
 
-2. **Install dependencies:**
+---
+
+## 🚀 Local Installation & Usage
+
+1. **Install dependencies:**
    ```bash
    pip install -r requirements.txt
    ```
 
-3. **Launch the Streamlit Terminal:**
+2. **Run the Real-Data Historical Backtest Engine:**
+   ```bash
+   python backtest_engine.py
+   ```
+
+3. **Execute a Headless 3:00 PM IST Paper Trade & MTM Sync:**
+   ```bash
+   RUN_DAILY_3PM_PAPER_TRADE=true python app.py
+   ```
+
+4. **Launch the Interactive Streamlit Terminal:**
    ```bash
    streamlit run app.py
    ```
-
-4. **Run Headless Audit Check:**
-   ```bash
-   python -c "import os; os.environ['GITHUB_ACTIONS']='true'; import app"
-   ```
-
----
-
-## ⚖️ Disclaimer
-*This terminal is developed for quantitative research, algorithmic analysis, and educational simulation purposes. Arbitrage trading involves execution risk, market impact slippage, and derivative margin requirements. Users should verify live order books and consult certified financial advisors before deploying live capital.*

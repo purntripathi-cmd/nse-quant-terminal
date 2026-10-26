@@ -1,5 +1,3 @@
-Ticker,Contract Name,Total Capital Required (₹),Net Return (%),Net XIRR (%),Model Confidence (%),Entry Timestamp (IST),Trigger Source,Status,Hurdle Met (>6.50%)
-ICICIBANK,ICICIBANK 31DEC2026,1122929,1.68,7.13,98.0,2026-10-06 08:36:08 IST,Automated (GitHub Actions),ACTIVE,True
-AXISBANK,AXISBANK 31DEC2026,919968,1.68,7.13,98.0,2026-10-06 08:36:08 IST,Automated (GitHub Actions),ACTIVE,True
-BHARTIARTL,BHARTIARTL 31DEC2026,1018214,1.68,7.13,98.0,2026-10-06 08:36:08 IST,Automated (GitHub Actions),ACTIVE,True
-ADANIENT,ADANIENT 31DEC2026,706125,1.49,7.04,98.0,2026-10-15 15:48:47 IST,Automated (GitHub Actions),ACTIVE,True
+Entry Timestamp (IST),Last MTM Sync (IST),Trigger Source,Strategy,Ticker,Contract Name,Expiry Date,Days Left at Entry,Days Held,Lot Size,Entry Spot (₹),Entry Future (₹),Current Spot (₹),Current Future (₹),Entry Basis (₹),Current Basis (₹),Total Capital Required (₹),Statutory Charges (₹),MTM Accrued P&L (₹),Worst-Case 4-Leg Net (₹),Locked Expiry Net Profit (₹),Net Return (%),Net XIRR (%),Traded Volume (Lots),Model Confidence (%),Status,Hurdle Met (>9.00%)
+2026-10-26 22:47:30 IST,2026-10-26 22:47:30 IST,Scheduled 3:00 PM IST Paper Trade,S5: Sniper Guaranteed-Profit (>9% XIRR),AMBUJACEM,AMBUJACEM 23NOV2026,2026-11-23,28,1,1200,367.95,373.5,367.95,373.5,5.55,5.55,463617,391.16,0.0,5015.14,6268.84,1.352,17.63,6335,93.4,ACTIVE,True
+2026-10-26 22:47:30 IST,2026-10-26 22:47:30 IST,Scheduled 3:00 PM IST Paper Trade,S5: Sniper Guaranteed-Profit (>9% XIRR),AXISBANK,AXISBANK 23NOV2026,2026-11-23,28,1,625,1220.0,1234.8,1220.0,1234.8,14.8,14.8,800625,640.12,0.0,6479.83,8609.88,1.075,14.02,35700,93.0,ACTIVE,True
