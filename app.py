@@ -793,6 +793,9 @@ if IS_HEADLESS_PAPER_RUN:
         print(f"Hurdle Beat Accuracy (> {financing_hurdle:.2f}%): {hurdle_wins}/{total} ({(hurdle_wins/total)*100:.1f}%)")
         print(f"Guaranteed Positive Carry Win Rate: {pos_wins}/{total} ({(pos_wins/total)*100:.1f}%)")
         print(f"Portfolio Average Net XIRR: {paper_df['Net XIRR (%)'].mean():.2f}%")
+    if IS_GITHUB_ACTIONS:
+        import subprocess
+        subprocess.run(["git", "add", "paper_trades.csv", "arbitrage_log.csv"], check=False)
     print("==================================================================")
     sys.exit(0)
 
